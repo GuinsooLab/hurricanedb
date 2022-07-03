@@ -1,0 +1,73 @@
+<div align="center">
+   <img src="assets/hurricanedb.svg" width="120" alt="hurricanedb"/>
+   <br/>
+   <small>a real-time distributed OLAP engine</small>
+</div>
+
+# HurricaneDB
+
+HurricaneDB is a real-time distributed OLAP datastore, built to deliver scalable real-time analytics with low latency. It can ingest from batch data sources (such as Hadoop HDFS, Amazon S3, Azure ADLS, Google Cloud Storage) as well as stream data sources (such as Apache Kafka).
+
+HurricaneDB was built by engineers at LinkedIn and Uber and is designed to scale up and out with no upper bound. Performance always remains constant based on the size of your cluster and an expected query per second (QPS) threshold.
+
+For getting started guides, deployment recipes, tutorials, and more, please visit our project documentation at [https://ciusji.gitbook.io/guinsoolab/products/query-engine](https://ciusji.gitbook.io/guinsoolab/products/query-engine).
+
+## Features
+
+HurricaneDB was originally built at LinkedIn to power rich interactive real-time analytic applications such as [Who Viewed Profile](https://www.linkedin.com/me/profile-views/urn:li:wvmp:summary/),  [Company Analytics](https://www.linkedin.com/company/linkedin/insights/),  [Talent Insights](https://business.linkedin.com/talent-solutions/talent-insights), and many more. [UberEats Restaurant Manager](https://eng.uber.com/restaurant-manager/) is another example of a customer facing Analytics App. At LinkedIn, Pinot powers 50+ user-facing products, ingesting millions of events per second and serving 100k+ queries per second at millisecond latency.
+
+* **Column-oriented**: a column-oriented database with various compression schemes such as Run Length, Fixed Bit Length.
+
+* [**Pluggable indexing**](https://docs.pinot.apache.org/basics/indexing): pluggable indexing technologies Sorted Index, Bitmap Index, Inverted Index.
+
+* **Query optimization**: ability to optimize query/execution plan based on query and segment metadata.
+
+* **Stream and batch ingest**: near real time ingestion from streams and batch ingestion from Hadoop.
+
+* **Query with SQL:** SQL-like language that supports selection, aggregation, filtering, group by, order by, distinct queries on data.
+
+* **Upsert during real-time ingestion**: update the data at-scale with consistency
+
+* **Multi-valued fields:** support for multi-valued fields, allowing you to query fields as comma separated values.
+
+* **Cloud-native on Kubernetes**: Helm chart provides a horizontally scalable and fault-tolerant clustered deployment that is easy to manage using Kubernetes.
+
+## When should I use HurricaneDB?
+
+HurricaneDB is designed to execute real-time OLAP queries with low latency on massive amounts of data and events. In addition to real-time stream ingestion, Pinot also supports batch use cases with the same low latency guarantees. It is suited in contexts where fast analytics, such as aggregations, are needed on immutable data, possibly, with real-time data ingestion. HurricaneDB works very well for querying time series data with lots of dimensions and metrics.
+
+Example query:
+```SQL
+SELECT sum(clicks), sum(impressions) FROM AdAnalyticsTable
+  WHERE
+       ((daysSinceEpoch >= 17849 AND daysSinceEpoch <= 17856)) AND
+       accountId IN (123456789)
+  GROUP BY
+       daysSinceEpoch TOP 100
+```
+
+HurricaneDB is not a replacement for database i.e it cannot be used as source of truth store, cannot mutate data. While HurricaneDB [supports text search](https://docs.pinot.apache.org/basics/features/text-search-support), it's not a replacement for a search engine. Also, HurricaneDB queries cannot span across multiple tables by default. You can use the [Trino-Pinot Connector](https://trino.io/docs/current/connector/pinot.html) or [Presto-Pinot Connector](https://prestodb.io/docs/current/connector/pinot.html) to achieve table joins and other features.
+
+## Building HurricaneDB
+
+More detailed instructions can be found at [Quick Demo](https://docs.pinot.apache.org/basics/getting-started/quick-start) section in the documentation.
+```
+# Clone a repo
+$ git clone git@github.com:GuinsooLab/hurricanedb.git
+$ cd pinot
+
+# Build HurricaneDB
+$ mvn clean install -DskipTests -Pbin-dist
+
+# Run the Quick Demo
+$ cd build/
+$ bin/quick-start-batch.sh
+```
+
+## Join the Community
+
+ - Ask questions on [Guinsoo HurricaneDB](https://ciusji.gitbook.io/guinsoolab/products/query-engine)
+ - HurricaneDB Meetup Group: https://ciusji.gitbook.io/guinsoolab/products/query-engine
+
+## License
+HurricaneDB is under [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
