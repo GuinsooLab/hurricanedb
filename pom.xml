@@ -4,39 +4,39 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.guinsoolab</groupId>
-    <artifactId>lab</artifactId>
+    <groupId>org.apache</groupId>
+    <artifactId>apache</artifactId>
     <version>21</version>
   </parent>
 
-  <groupId>org.apache.pinot</groupId>
-  <artifactId>pinot</artifactId>
-  <version>0.11.0-SNAPSHOT</version>
+  <groupId>io.guinsoolab</groupId>
+  <artifactId>hurricanedb</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>Pinot</name>
+  <name>HurricaneDb</name>
   <description>A realtime distributed OLAP datastore</description>
-  <url>https://pinot.apache.org/</url>
+  <url>https://github.com/GuinsooLab/hurricanedb</url>
 
   <modules>
-    <module>pinot-spi</module>
-    <module>pinot-segment-spi</module>
-    <module>pinot-broker</module>
-    <module>pinot-common</module>
-    <module>pinot-clients</module>
-    <module>pinot-server</module>
-    <module>pinot-core</module>
-    <module>pinot-controller</module>
-    <module>pinot-minion</module>
-    <module>pinot-plugins</module>
-    <module>pinot-tools</module>
-    <module>pinot-perf</module>
-    <module>pinot-integration-test-base</module>
-    <module>pinot-integration-tests</module>
-    <module>pinot-distribution</module>
-    <module>pinot-connectors</module>
-    <module>pinot-segment-local</module>
-    <module>pinot-compatibility-verifier</module>
-    <module>contrib/pinot-fmpp-maven-plugin</module>
+    <module>hc-spi</module>
+    <module>hc-segment-spi</module>
+    <module>hc-broker</module>
+    <module>hc-common</module>
+    <module>hc-clients</module>
+    <module>hc-server</module>
+    <module>hc-core</module>
+    <module>hc-controller</module>
+    <module>hc-minion</module>
+    <module>hc-plugins</module>
+    <module>hc-tools</module>
+    <module>hc-perf</module>
+    <module>hc-integration-test-base</module>
+    <module>hc-integration-tests</module>
+    <module>hc-distribution</module>
+    <module>hc-connectors</module>
+    <module>hc-segment-local</module>
+    <module>hc-compatibility-verifier</module>
+    <module>contrib/hc-fmpp-maven-plugin</module>
   </modules>
 
   <licenses>
@@ -48,35 +48,12 @@
   </licenses>
 
   <organization>
-    <name>Apache Software Foundation</name>
-    <url>http://www.apache.org</url>
+    <name>GuinsooLab</name>
+    <url>https://guinsoolab.github.io/glab</url>
   </organization>
 
-  <mailingLists>
-    <mailingList>
-      <name>Dev Mailing List</name>
-      <post>dev@pinot.apache.org</post>
-      <subscribe>dev-subscribe@pinot.apache.org</subscribe>
-      <unsubscribe>dev-unsubscribe@pinot.apache.org</unsubscribe>
-    </mailingList>
-
-    <mailingList>
-      <name>User Mailing List</name>
-      <post>user@pinot.apache.org</post>
-      <subscribe>user-subscribe@pinot.apache.org</subscribe>
-      <unsubscribe>user-unsubscribe@pinot.apache.org</unsubscribe>
-    </mailingList>
-
-    <mailingList>
-      <name>Commits Mailing List</name>
-      <post>commits@pinot.apache.org</post>
-      <subscribe>commits-subscribe@pinot.apache.org</subscribe>
-      <unsubscribe>commits-unsubscribe@pinot.apache.org</unsubscribe>
-    </mailingList>
-  </mailingLists>
-
   <scm>
-    <developerConnection>scm:git:git@github.com:apache/pinot.git</developerConnection>
+    <developerConnection>scm:git:git@github.com:GuinsooLab/hurricanedb.git</developerConnection>
     <tag>HEAD</tag>
   </scm>
 
@@ -118,7 +95,7 @@
     <reflections.version>0.9.9</reflections.version>
     <!-- commons-configuration, hadoop-common, hadoop-client use commons-lang -->
     <commons-lang.version>2.6</commons-lang.version>
-    <!-- pinot-common, commons-configuration, hadoop-common, hadoop-client use commons-logging -->
+    <!-- hc-common, commons-configuration, hadoop-common, hadoop-client use commons-logging -->
     <commons-logging.version>1.2</commons-logging.version>
     <!-- hadoop-common, spark-core use commons-net -->
     <commons-net.version>3.1</commons-net.version>
@@ -1334,6 +1311,7 @@
             <archive>
               <manifestEntries>
                 <Build-Time>${maven.build.timestamp}</Build-Time>
+                <!--suppress UnresolvedMavenProperty -->
                 <Implementation-Branch>${scmBranch}</Implementation-Branch>
                 <Implementation-Title>${project.artifactId}</Implementation-Title>
                 <Implementation-Version>${project.version}-${buildNumber}</Implementation-Version>
