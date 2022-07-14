@@ -64,8 +64,8 @@ $ bin/quick-start-batch.sh
 
 ## Join the Community
 
- - Ask questions on [Guinsoo HurricaneDB](https://github.com/GuinsooLab/hurricanedb/issues)
- - HurricaneDB Meetup Group: https://ciusji.gitbook.io/guinsoolab/products/query-engine
+ - Ask questions on [GuinsooLab HurricaneDB](https://github.com/GuinsooLab/hurricanedb/issues)
+ - HurricaneDB Meetup Group: https://ciusji.gitbook.io/guinsoolab/products/query-engine/hurricanedb
 
 ## License
 
