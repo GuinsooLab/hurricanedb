@@ -25,14 +25,14 @@
 
   <parent>
     <artifactId>prestodb-pinot-dependencies</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-common-jdk8</artifactId>
-  <name>Pinot Common JDK 8</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-common-jdk8</artifactId>
+  <name>HurricaneDB Common JDK 8</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
   </properties>
@@ -114,8 +114,8 @@
         </executions>
       </plugin>
       <plugin>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-fmpp-maven-plugin</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-fmpp-maven-plugin</artifactId>
         <version>${project.version}</version>
         <executions>
           <execution>
@@ -177,18 +177,18 @@
   </build>
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-spi-jdk8</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-spi-jdk8</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-segment-spi-jdk8</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-segment-spi-jdk8</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-yammer</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-yammer</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

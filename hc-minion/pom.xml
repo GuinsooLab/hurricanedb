@@ -3,14 +3,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hurricanedb</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-minion</artifactId>
-  <name>Pinot Minion</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-minion</artifactId>
+  <name>HurricaneDB Minion</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/..</pinot.root>
   </properties>
@@ -34,12 +34,12 @@
   </build>
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-core</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-core</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-batch-ingestion-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-batch-ingestion-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -67,14 +67,14 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-avro</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-avro</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-yammer</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-yammer</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

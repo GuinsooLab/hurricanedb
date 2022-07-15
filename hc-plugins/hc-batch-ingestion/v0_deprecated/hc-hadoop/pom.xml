@@ -24,13 +24,13 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <artifactId>v0_deprecated</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-hadoop</artifactId>
-  <name>Pinot Hadoop</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-hadoop</artifactId>
+  <name>HurricaneDB Hadoop</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../../..</pinot.root>
     <phase.prop>package</phase.prop>
@@ -94,37 +94,37 @@
   </profiles>
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-ingestion-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-ingestion-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-core</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-core</artifactId>
       <exclusions>
         <exclusion>
           <groupId>commons-lang</groupId>
           <artifactId>commons-lang</artifactId>
         </exclusion>
         <exclusion>
-          <groupId>org.apache.pinot</groupId>
-          <artifactId>pinot-common</artifactId>
+          <groupId>io.guinsoolab.hurricanedb</groupId>
+          <artifactId>hc-common</artifactId>
         </exclusion>
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-parquet</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-parquet</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>
-          <groupId>org.apache.pinot</groupId>
-          <artifactId>pinot-core</artifactId>
+          <groupId>io.guinsoolab.hurricanedb</groupId>
+          <artifactId>hc-core</artifactId>
         </exclusion>
         <exclusion>
           <groupId>org.apache.hadoop</groupId>
@@ -133,13 +133,13 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-orc</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-orc</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>
-          <groupId>org.apache.pinot</groupId>
-          <artifactId>pinot-core</artifactId>
+          <groupId>io.guinsoolab.hurricanedb</groupId>
+          <artifactId>hc-core</artifactId>
         </exclusion>
         <exclusion>
           <groupId>org.apache.hadoop</groupId>
@@ -152,23 +152,23 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-thrift</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-thrift</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-csv</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-csv</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-json</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-json</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-protobuf</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-protobuf</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>

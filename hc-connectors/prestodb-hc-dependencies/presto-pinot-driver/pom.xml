@@ -25,13 +25,13 @@
 
     <parent>
         <artifactId>prestodb-pinot-dependencies</artifactId>
-        <groupId>org.apache.pinot</groupId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
         <version>0.11.0-SNAPSHOT</version>
         <relativePath>..</relativePath>
     </parent>
 
     <name>Presto Pinot Driver</name>
-    <groupId>org.apache.pinot</groupId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <artifactId>presto-pinot-driver</artifactId>
 
     <properties>
@@ -53,8 +53,8 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.pinot</groupId>
-            <artifactId>pinot-spi-jdk8</artifactId>
+            <groupId>io.guinsoolab.hurricanedb</groupId>
+            <artifactId>hc-spi-jdk8</artifactId>
             <version>${project.version}</version>
             <exclusions>
                 <exclusion>
@@ -144,8 +144,8 @@
             </exclusions>
         </dependency>
         <dependency>
-            <groupId>org.apache.pinot</groupId>
-            <artifactId>pinot-common-jdk8</artifactId>
+            <groupId>io.guinsoolab.hurricanedb</groupId>
+            <artifactId>hc-common-jdk8</artifactId>
             <version>${project.version}</version>
             <exclusions>
                 <exclusion>
@@ -272,8 +272,8 @@
         </dependency>
 
         <dependency>
-            <groupId>org.apache.pinot</groupId>
-            <artifactId>pinot-core-jdk8</artifactId>
+            <groupId>io.guinsoolab.hurricanedb</groupId>
+            <artifactId>hc-core-jdk8</artifactId>
             <version>${project.version}</version>
             <exclusions>
                 <exclusion>

@@ -3,14 +3,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hurricanedb</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-spi</artifactId>
-  <name>Pinot Service Provider Interface</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-spi</artifactId>
+  <name>HurricaneDB Service Provider Interface</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/..</pinot.root>
   </properties>

@@ -24,14 +24,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>org.apache.pinot</groupId>
-    <artifactId>pinot-connectors</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
+    <artifactId>hc-connectors</artifactId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-flink-connector</artifactId>
-  <name>Pinot Flink Connector</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-flink-connector</artifactId>
+  <name>HurricaneDB Flink Connector</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../..</pinot.root>
     <scala.version>2.12</scala.version>
@@ -57,18 +57,18 @@
       <version>${flink.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-controller</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-controller</artifactId>
       <version>${project.parent.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-segment-writer-file-based</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-segment-writer-file-based</artifactId>
       <version>${project.parent.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-segment-uploader-default</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-segment-uploader-default</artifactId>
       <version>${project.parent.version}</version>
     </dependency>
 
@@ -90,8 +90,8 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-integration-test-base</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-integration-test-base</artifactId>
       <version>${project.parent.version}</version>
       <type>test-jar</type>
       <scope>test</scope>

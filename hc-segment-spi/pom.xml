@@ -3,14 +3,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hurricanedb</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-segment-spi</artifactId>
-  <name>Pinot Segment Service Provider Interface</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-segment-spi</artifactId>
+  <name>HurricaneDB Segment Service Provider Interface</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/..</pinot.root>
   </properties>
@@ -36,8 +36,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-spi</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-spi</artifactId>
     </dependency>
     <dependency>
       <groupId>org.roaringbitmap</groupId>

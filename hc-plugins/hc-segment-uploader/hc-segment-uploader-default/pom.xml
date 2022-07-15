@@ -24,15 +24,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-segment-uploader</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-segment-uploader</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-segment-uploader-default</artifactId>
-  <name>Pinot Segment Uploader Default</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-segment-uploader-default</artifactId>
+  <name>HurricaneDB Segment Uploader Default</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
     <phase.prop>none</phase.prop>
@@ -40,13 +40,13 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-core</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-core</artifactId>
       <version>${project.version}</version>
     </dependency>
   </dependencies>

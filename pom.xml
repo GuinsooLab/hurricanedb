@@ -269,103 +269,103 @@
         <version>4.4.13</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-common</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-common</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-avro</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-avro</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-spi</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-spi</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-segment-spi</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-segment-spi</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-segment-local</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-segment-local</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-yammer</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-yammer</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-java-client</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-java-client</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-core</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-controller</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-controller</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-tools</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-tools</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-hadoop</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-hadoop</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-spark</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-spark</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-server</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-server</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-broker</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-broker</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-minion</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-minion</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-hdfs</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-hdfs</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-azure</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-azure</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-orc</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-orc</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-perf</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-perf</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.apache.pinot</groupId>
-        <artifactId>pinot-integration-test-base</artifactId>
+        <groupId>io.guinsoolab.hurricanedb</groupId>
+        <artifactId>hc-integration-test-base</artifactId>
         <version>${project.version}</version>
         <type>test-jar</type>
       </dependency>

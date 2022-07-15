@@ -1,7 +1,9 @@
 <div align="center">
-   <img src="assets/hurricanedb.svg" width="120" alt="hurricanedb"/>
-   <br/>
-   <small>a real-time distributed OLAP engine</small>
+    <img src="assets/guinsoolab-badge.png" width="60" alt="badge" align="right">
+    <br/>
+    <img src="assets/hurricanedb.svg" width="120" alt="hurricanedb"/>
+    <br/>
+    <small>a real-time distributed OLAP engine</small>
 </div>
 
 # [HurricaneDB](https://guinsoolab.github.io/glab/#/app/hurricaneDB)

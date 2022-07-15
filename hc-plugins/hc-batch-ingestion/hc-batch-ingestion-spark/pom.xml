@@ -24,15 +24,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-batch-ingestion</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-batch-ingestion</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-batch-ingestion-spark</artifactId>
-  <name>Pinot Batch Ingestion for Spark</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-batch-ingestion-spark</artifactId>
+  <name>HurricaneDB Batch Ingestion for Spark</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
     <phase.prop>package</phase.prop>
@@ -42,8 +42,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-batch-ingestion-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-batch-ingestion-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

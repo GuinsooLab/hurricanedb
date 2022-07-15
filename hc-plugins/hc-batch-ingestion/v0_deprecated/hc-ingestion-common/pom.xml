@@ -25,14 +25,14 @@
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <artifactId>v0_deprecated</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-ingestion-common</artifactId>
-  <name>Pinot Ingestion Common</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-ingestion-common</artifactId>
+  <name>HurricaneDB Ingestion Common</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../../..</pinot.root>
     <phase.prop>package</phase.prop>
@@ -58,13 +58,13 @@
     </dependency>
 
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-parquet</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-parquet</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>
-          <groupId>org.apache.pinot</groupId>
-          <artifactId>pinot-core</artifactId>
+          <groupId>io.guinsoolab.hurricanedb</groupId>
+          <artifactId>hc-core</artifactId>
         </exclusion>
         <exclusion>
           <groupId>com.thoughtworks.paranamer</groupId>
@@ -73,13 +73,13 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-orc</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-orc</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>
-          <groupId>org.apache.pinot</groupId>
-          <artifactId>pinot-core</artifactId>
+          <groupId>io.guinsoolab.hurricanedb</groupId>
+          <artifactId>hc-core</artifactId>
         </exclusion>
         <exclusion>
           <groupId>org.apache.hadoop</groupId>
@@ -92,23 +92,23 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-thrift</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-thrift</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-csv</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-csv</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-json</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-json</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-protobuf</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-protobuf</artifactId>
       <version>${project.version}</version>
       <exclusions>
         <exclusion>

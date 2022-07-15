@@ -24,14 +24,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-file-system</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-file-system</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-s3</artifactId>
-  <name>Pinot Amazon S3</name>
+  <artifactId>hc-s3</artifactId>
+  <name>HurricaneDB Amazon S3</name>
   <url>https://pinot.apache.org</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
@@ -61,8 +61,8 @@
       <artifactId>commons-configuration</artifactId>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-spi</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-spi</artifactId>
     </dependency>
     <!-- amazon s3 -->
     <dependency>

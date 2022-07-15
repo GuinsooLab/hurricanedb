@@ -24,15 +24,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-stream-ingestion</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-stream-ingestion</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-pulsar</artifactId>
-  <name>Pinot Pulsar</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-pulsar</artifactId>
+  <name>HurricaneDB Pulsar</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
 
   <properties>
     <phase.prop>package</phase.prop>
@@ -390,8 +390,8 @@
       <version>${bouncycastle.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-spi</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-spi</artifactId>
       <exclusions>
         <exclusion>
           <groupId>commons-codec</groupId>

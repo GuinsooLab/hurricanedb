@@ -24,15 +24,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-batch-ingestion</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-batch-ingestion</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-batch-ingestion-hadoop</artifactId>
-  <name>Pinot Batch Ingestion for Hadoop</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-batch-ingestion-hadoop</artifactId>
+  <name>HurricaneDB Batch Ingestion for Hadoop</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
     <hadoop.version>2.10.1</hadoop.version>
@@ -40,8 +40,8 @@
   </properties>
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-batch-ingestion-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-batch-ingestion-common</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -90,16 +90,16 @@
 
     <!-- For testing import of csv files -->
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-csv</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-csv</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>
 
     <!-- So we have a jar to stick in the dependency jars directory -->
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-json</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-json</artifactId>
       <version>${project.version}</version>
       <scope>test</scope>
     </dependency>

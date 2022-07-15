@@ -24,15 +24,15 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot-stream-ingestion</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hc-stream-ingestion</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-kafka-0.9</artifactId>
-  <name>Pinot Kafka 0.9</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-kafka-0.9</artifactId>
+  <name>HurricaneDB Kafka 0.9</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
     <kafka.lib.version>0.9.0.1</kafka.lib.version>
@@ -42,8 +42,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-kafka-base</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-kafka-base</artifactId>
       <version>${project.version}</version>
     </dependency>
     <!-- Kafka  -->

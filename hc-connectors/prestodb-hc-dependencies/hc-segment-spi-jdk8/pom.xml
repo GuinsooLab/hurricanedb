@@ -26,22 +26,22 @@
 
   <parent>
     <artifactId>prestodb-pinot-dependencies</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
-  <artifactId>pinot-segment-spi-jdk8</artifactId>
-  <name>Pinot Segment Service Provider Interface JDK 8</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-segment-spi-jdk8</artifactId>
+  <name>HurricaneDB Segment Service Provider Interface JDK 8</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <properties>
     <pinot.root>${basedir}/../../..</pinot.root>
   </properties>
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-spi-jdk8</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-spi-jdk8</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
