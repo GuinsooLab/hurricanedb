@@ -3,14 +3,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <artifactId>pinot</artifactId>
-    <groupId>org.apache.pinot</groupId>
+    <artifactId>hurricanedb</artifactId>
+    <groupId>io.guinsoolab.hurricanedb</groupId>
     <version>0.11.0-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
-  <artifactId>pinot-compatibility-verifier</artifactId>
-  <name>Pinot Compatibility Verifier</name>
-  <url>https://pinot.apache.org/</url>
+  <artifactId>hc-compatibility-verifier</artifactId>
+  <name>HurricaneDB Compatibility Verifier</name>
+  <url>https://guinsoolab.github.io/glab/#/app/hurricaneDB</url>
   <packaging>jar</packaging>
 
   <properties>
@@ -57,8 +57,8 @@
 
   <dependencies>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-tools</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-tools</artifactId>
       <exclusions>
         <exclusion>
           <groupId>net.minidev</groupId>
@@ -67,14 +67,14 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-common</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-common</artifactId>
       <version>${project.version}</version>
       <type>test-jar</type>
     </dependency>
     <dependency>
-      <groupId>org.apache.pinot</groupId>
-      <artifactId>pinot-controller</artifactId>
+      <groupId>io.guinsoolab.hurricanedb</groupId>
+      <artifactId>hc-controller</artifactId>
       <version>${project.version}</version>
       <type>test-jar</type>
     </dependency>
