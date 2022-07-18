@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
@@ -9,34 +29,37 @@
     <version>21</version>
   </parent>
 
-  <groupId>io.guinsoolab</groupId>
-  <artifactId>hurricanedb</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <groupId>org.apache.pinot</groupId>
+  <artifactId>pinot</artifactId>
+  <version>0.11.0-SNAPSHOT</version>
   <packaging>pom</packaging>
-  <name>HurricaneDb</name>
+  <name>Pinot</name>
   <description>A realtime distributed OLAP datastore</description>
-  <url>https://github.com/GuinsooLab/hurricanedb</url>
+  <url>https://pinot.apache.org/</url>
 
   <modules>
-    <module>hc-spi</module>
-    <module>hc-segment-spi</module>
-    <module>hc-broker</module>
-    <module>hc-common</module>
-    <module>hc-clients</module>
-    <module>hc-server</module>
-    <module>hc-core</module>
-    <module>hc-controller</module>
-    <module>hc-minion</module>
-    <module>hc-plugins</module>
-    <module>hc-tools</module>
-    <module>hc-perf</module>
-    <module>hc-integration-test-base</module>
-    <module>hc-integration-tests</module>
-    <module>hc-distribution</module>
-    <module>hc-connectors</module>
-    <module>hc-segment-local</module>
-    <module>hc-compatibility-verifier</module>
-    <module>contrib/hc-fmpp-maven-plugin</module>
+    <module>pinot-spi</module>
+    <module>pinot-segment-spi</module>
+    <module>pinot-broker</module>
+    <module>pinot-common</module>
+    <module>pinot-clients</module>
+    <module>pinot-server</module>
+    <module>pinot-core</module>
+    <module>pinot-controller</module>
+    <module>pinot-minion</module>
+    <module>pinot-plugins</module>
+    <module>pinot-tools</module>
+    <module>pinot-perf</module>
+    <module>pinot-integration-test-base</module>
+    <module>pinot-integration-tests</module>
+    <module>pinot-distribution</module>
+    <module>pinot-connectors</module>
+    <module>pinot-segment-local</module>
+    <module>pinot-compatibility-verifier</module>
+    <module>contrib/pinot-fmpp-maven-plugin</module>
+
+    <module>pinot-query-planner</module>
+    <module>pinot-query-runtime</module>
   </modules>
 
   <licenses>
@@ -48,12 +71,35 @@
   </licenses>
 
   <organization>
-    <name>GuinsooLab</name>
-    <url>https://guinsoolab.github.io/glab</url>
+    <name>Apache Software Foundation</name>
+    <url>http://www.apache.org</url>
   </organization>
 
+  <mailingLists>
+    <mailingList>
+      <name>Dev Mailing List</name>
+      <post>dev@pinot.apache.org</post>
+      <subscribe>dev-subscribe@pinot.apache.org</subscribe>
+      <unsubscribe>dev-unsubscribe@pinot.apache.org</unsubscribe>
+    </mailingList>
+
+    <mailingList>
+      <name>User Mailing List</name>
+      <post>user@pinot.apache.org</post>
+      <subscribe>user-subscribe@pinot.apache.org</subscribe>
+      <unsubscribe>user-unsubscribe@pinot.apache.org</unsubscribe>
+    </mailingList>
+
+    <mailingList>
+      <name>Commits Mailing List</name>
+      <post>commits@pinot.apache.org</post>
+      <subscribe>commits-subscribe@pinot.apache.org</subscribe>
+      <unsubscribe>commits-unsubscribe@pinot.apache.org</unsubscribe>
+    </mailingList>
+  </mailingLists>
+
   <scm>
-    <developerConnection>scm:git:git@github.com:GuinsooLab/hurricanedb.git</developerConnection>
+    <developerConnection>scm:git:git@github.com:apache/pinot.git</developerConnection>
     <tag>HEAD</tag>
   </scm>
 
@@ -79,23 +125,23 @@
     <parquet.version>1.11.1</parquet.version>
     <helix.version>0.9.8</helix.version>
     <zkclient.version>0.7</zkclient.version>
-    <jackson.version>2.10.0</jackson.version>
+    <jackson.version>2.12.7</jackson.version>
     <zookeeper.version>3.5.8</zookeeper.version>
     <async-http-client.version>2.12.3</async-http-client.version>
-    <jersey.version>2.28</jersey.version>
+    <jersey.version>2.35</jersey.version>
     <grizzly.version>2.4.4</grizzly.version>
-    <hk2.version>2.5.0</hk2.version>
-    <swagger.version>1.5.16</swagger.version>
+    <hk2.version>2.6.1</hk2.version>
+    <swagger.version>1.6.6</swagger.version>
     <hadoop.version>2.10.1</hadoop.version>
     <antlr.version>4.6</antlr.version>
     <jsonpath.version>2.7.0</jsonpath.version>
     <quartz.version>2.3.2</quartz.version>
     <calcite.version>1.29.0</calcite.version>
     <lucene.version>8.2.0</lucene.version>
-    <reflections.version>0.9.9</reflections.version>
+    <reflections.version>0.9.11</reflections.version>
     <!-- commons-configuration, hadoop-common, hadoop-client use commons-lang -->
     <commons-lang.version>2.6</commons-lang.version>
-    <!-- hc-common, commons-configuration, hadoop-common, hadoop-client use commons-logging -->
+    <!-- pinot-common, commons-configuration, hadoop-common, hadoop-client use commons-logging -->
     <commons-logging.version>1.2</commons-logging.version>
     <!-- hadoop-common, spark-core use commons-net -->
     <commons-net.version>3.1</commons-net.version>
@@ -103,12 +149,12 @@
     <dropwizard-metrics.version>4.2.2</dropwizard-metrics.version>
     <snappy-java.version>1.1.8.2</snappy-java.version>
     <zstd-jni.version>1.4.9-5</zstd-jni.version>
-    <lz4-java.version>1.7.1</lz4-java.version>
+    <lz4-java.version>1.8.0</lz4-java.version>
     <log4j.version>2.17.1</log4j.version>
     <netty.version>4.1.74.Final</netty.version>
     <reactivestreams.version>1.0.3</reactivestreams.version>
     <jts.version>1.16.1</jts.version>
-    <h3.version>3.0.3</h3.version>
+    <h3.version>3.7.2</h3.version>
     <jmh.version>1.26</jmh.version>
     <audienceannotations.version>0.13.0</audienceannotations.version>
 
@@ -126,40 +172,19 @@
     <!-- Checkstyle violation prop.-->
     <checkstyle.violation.severity>warning</checkstyle.violation.severity>
     <checkstyle.fail.on.violation>true</checkstyle.fail.on.violation>
+
+    <!-- Configuration for Packaging -->
+    <shade.prefix>org.apache.pinot.shaded</shade.prefix>
   </properties>
 
   <profiles>
-    <profile>
-      <id>kafka-0.9</id>
-      <activation>
-        <property>
-          <name>kafka.version</name>
-          <value>0.9</value>
-        </property>
-      </activation>
-      <properties>
-        <kafka.version>0.9</kafka.version>
-      </properties>
-    </profile>
-    <profile>
-      <id>kafka-2.0</id>
-      <activation>
-        <property>
-          <name>kafka.version</name>
-          <value>2.0</value>
-        </property>
-      </activation>
-      <properties>
-        <kafka.version>2.0</kafka.version>
-      </properties>
-    </profile>
     <profile>
       <id>github-actions</id>
       <activation>
         <activeByDefault>false</activeByDefault>
       </activation>
       <properties>
-        <argLine>-Xms8g -Xmx8g -Dlog4j2.configurationFile=log4j2.xml</argLine>
+        <argLine>-Xms4g -Xmx4g -Dlog4j2.configurationFile=log4j2.xml</argLine>
       </properties>
     </profile>
     <!-- jfim: this profile is overridden in pinot-integration-tests -->
@@ -269,106 +294,129 @@
         <version>4.4.13</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-common</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-common</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-avro</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-avro</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-spi</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-spi</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-segment-spi</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-segment-spi</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-segment-local</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-segment-local</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-yammer</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-yammer</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-java-client</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-java-client</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-core</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-jdbc-client</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-controller</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-tools</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-controller</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-hadoop</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-tools</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-spark</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-hadoop</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-server</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-spark</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-broker</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-server</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-minion</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-broker</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-hdfs</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-minion</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-azure</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-hdfs</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-orc</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-azure</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-perf</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-orc</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>io.guinsoolab.hurricanedb</groupId>
-        <artifactId>hc-integration-test-base</artifactId>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-perf</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-integration-test-base</artifactId>
         <version>${project.version}</version>
         <type>test-jar</type>
       </dependency>
+
+      <dependency>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-query-planner</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-query-planner</artifactId>
+        <version>${project.version}</version>
+        <type>test-jar</type>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.pinot</groupId>
+        <artifactId>pinot-query-runtime</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
       <dependency>
         <groupId>nl.jqno.equalsverifier</groupId>
         <artifactId>equalsverifier</artifactId>
@@ -393,7 +441,7 @@
       <dependency>
         <groupId>org.roaringbitmap</groupId>
         <artifactId>RoaringBitmap</artifactId>
-        <version>0.9.26</version>
+        <version>0.9.28</version>
       </dependency>
       <dependency>
         <groupId>com.101tec</groupId>
@@ -423,7 +471,7 @@
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>
-        <version>3.5</version>
+        <version>3.11</version>
       </dependency>
       <dependency>
         <groupId>commons-collections</groupId>
@@ -453,13 +501,6 @@
         <version>${netty.version}</version>
         <type>pom</type>
         <scope>import</scope>
-      </dependency>
-
-      <!-- zkclient & helix-core use netty -->
-      <dependency>
-        <groupId>io.netty</groupId>
-        <artifactId>netty</artifactId>
-        <version>3.9.6.Final</version>
       </dependency>
 
       <dependency>
@@ -542,21 +583,6 @@
         <groupId>javax.activation</groupId>
         <artifactId>activation</artifactId>
         <version>1.1.1</version>
-      </dependency>
-      <dependency>
-        <groupId>javax.xml.bind</groupId>
-        <artifactId>jaxb-api</artifactId>
-        <version>2.3.0</version>
-      </dependency>
-      <dependency>
-        <groupId>com.sun.xml.bind</groupId>
-        <artifactId>jaxb-core</artifactId>
-        <version>2.3.0</version>
-      </dependency>
-      <dependency>
-        <groupId>com.sun.xml.bind</groupId>
-        <artifactId>jaxb-impl</artifactId>
-        <version>2.3.0</version>
       </dependency>
       <dependency>
         <groupId>org.apache.helix</groupId>
@@ -943,10 +969,6 @@
             <artifactId>commons-dbcp2</artifactId>
           </exclusion>
           <exclusion>
-            <groupId>com.esri.geometry</groupId>
-            <artifactId>esri-geometry-api</artifactId>
-          </exclusion>
-          <exclusion>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
           </exclusion>
@@ -1056,6 +1078,31 @@
         <groupId>org.glassfish.hk2</groupId>
         <artifactId>hk2-locator</artifactId>
         <version>${hk2.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.glassfish.hk2</groupId>
+        <artifactId>hk2-metadata-generator</artifactId>
+        <version>${hk2.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>org.glassfish.jersey.media</groupId>
@@ -1071,6 +1118,12 @@
         <groupId>io.swagger</groupId>
         <artifactId>swagger-jaxrs</artifactId>
         <version>${swagger.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+          </exclusion>
+        </exclusions>
       </dependency>
       <dependency>
         <groupId>io.swagger</groupId>
@@ -1080,6 +1133,10 @@
           <exclusion>
             <groupId>javax.ws.rs</groupId>
             <artifactId>jsr311-api</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
           </exclusion>
           <exclusion>
             <groupId>org.glassfish.hk2.external</groupId>
@@ -1311,7 +1368,6 @@
             <archive>
               <manifestEntries>
                 <Build-Time>${maven.build.timestamp}</Build-Time>
-                <!--suppress UnresolvedMavenProperty -->
                 <Implementation-Branch>${scmBranch}</Implementation-Branch>
                 <Implementation-Title>${project.artifactId}</Implementation-Title>
                 <Implementation-Version>${project.version}-${buildNumber}</Implementation-Version>
@@ -1342,7 +1398,8 @@
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-enforcer-plugin</artifactId>
-          <version>3.0.0-M2</version>
+          <!-- Note that 3.0.0, while newer, has bugs w/provided transitive dependencies -->
+          <version>3.0.0-M3</version>
           <executions>
             <execution>
               <id>enforce-dependency-convergence</id>
@@ -1484,7 +1541,9 @@
             <phase>site</phase>
             <configuration>
               <!-- Specific configuration for the aggregate report -->
-              <excludePackageNames>org.apache.pinot.pql.parsers:org.apache.pinot.common.response</excludePackageNames>
+              <excludePackageNames>
+                org.apache.pinot.common.request:org.apache.pinot.common.response
+              </excludePackageNames>
               <skip>false</skip>
             </configuration>
           </execution>
@@ -1574,6 +1633,7 @@
             <exclude>**/*.avsc</exclude>
             <exclude>**/*.csv</exclude>
             <exclude>**/*.desc</exclude>
+            <exclude>**/*.fst</exclude>
             <exclude>**/*.parquet</exclude>
             <exclude>**/*.gz</exclude>
             <exclude>**/*.orc</exclude>
@@ -1609,6 +1669,9 @@
 
             <!-- files from Eclipse -->
             <exclude>**/maven-eclipse.xml</exclude>
+            <exclude>**/.settings/**</exclude>
+            <exclude>**/.project</exclude>
+            <exclude>**/.classpath</exclude>
             <exclude>.externalToolBuilders/**</exclude>
           </excludes>
           <mapping>
@@ -1625,7 +1688,6 @@
             <ftl>FTL_STYLE</ftl>
             <MockMaker>SCRIPT_STYLE</MockMaker>
             <appAssemblerScriptTemplate>SCRIPT_STYLE</appAssemblerScriptTemplate>
-            <pql>SCRIPT_STYLE</pql>
             <sql>SCRIPT_STYLE</sql>
             <conf>DOUBLESLASH_STYLE</conf>
             <cfg>DOUBLESLASH_STYLE</cfg>
@@ -1683,6 +1745,7 @@
             <exclude>**/*.avsc</exclude>
             <exclude>**/*.csv</exclude>
             <exclude>**/*.desc</exclude>
+            <exclude>**/*.fst</exclude>
             <exclude>**/*.parquet</exclude>
             <exclude>**/*.gz</exclude>
             <exclude>**/*.orc</exclude>
@@ -1707,6 +1770,7 @@
             <exclude>**/maven-eclipse.xml</exclude>
             <exclude>**/.settings/**</exclude>
             <exclude>**/.project</exclude>
+            <exclude>**/.classpath</exclude>
             <exclude>.externalToolBuilders/**</exclude>
 
             <!-- Docker and Kubernetes (not part of the distribution) -->
@@ -1835,7 +1899,9 @@
             <id>non-aggregate</id>
             <configuration>
               <!-- Specific configuration for the non aggregate report -->
-              <excludePackageNames>org.apache.pinot.pql.parsers:org.apache.pinot.common.response</excludePackageNames>
+              <excludePackageNames>
+                org.apache.pinot.common.request:org.apache.pinot.common.response
+              </excludePackageNames>
               <skip>true</skip>
             </configuration>
             <reports>
@@ -1845,7 +1911,9 @@
           <reportSet>
             <id>aggregate</id>
             <configuration>
-              <excludePackageNames>org.apache.pinot.pql.parsers:org.apache.pinot.common.response</excludePackageNames>
+              <excludePackageNames>
+                org.apache.pinot.common.request:org.apache.pinot.common.response
+              </excludePackageNames>
               <skip>true</skip>
             </configuration>
             <reports>
