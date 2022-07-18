@@ -4,7 +4,7 @@
 <div align="center">
     <img src="assets/hurricanedb.svg" width="120" alt="hurricanedb"/>
     <br/>
-    <small>a real-time distributed OLAP engine</small>
+    <small>a real-time distributed OLAP engine, powered by Apache Pinot</small>
 </div>
 
 # [HurricaneDB](https://guinsoolab.github.io/glab/#/app/hurricaneDB)
@@ -67,8 +67,8 @@ $ bin/quick-start-batch.sh
 
 ## Join the Community
 
- - Ask questions on [GuinsooLab HurricaneDB](https://github.com/GuinsooLab/hurricanedb/issues)
- - HurricaneDB Meetup Group: https://ciusji.gitbook.io/guinsoolab/products/query-engine/hurricanedb
+- Ask questions on [GuinsooLab HurricaneDB](https://github.com/GuinsooLab/hurricanedb/issues)
+- HurricaneDB Meetup Group: https://ciusji.gitbook.io/guinsoolab/products/query-engine/hurricanedb
 
 ## License
 
