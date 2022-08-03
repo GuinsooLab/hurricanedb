@@ -69,6 +69,8 @@ public class OffHeapJsonIndexCreator extends BaseJsonIndexCreator {
   private int _numPostingListsInLastChunk;
   private int _numPostingLists;
 
+  // To enable the JSON index, set the following config in the table config
+  // Refer to https://ciusji.gitbook.io/guinsoolab/products/query-engine/hurricanedb/indexing/json-index
   public OffHeapJsonIndexCreator(File indexDir, String columnName)
       throws IOException {
     super(indexDir, columnName);
