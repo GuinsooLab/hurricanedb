@@ -31,7 +31,7 @@ public abstract class AccessControlFactory {
   public static final String ACCESS_CONTROL_CLASS_CONFIG = "class";
 
   public void init(PinotConfiguration configuration) {
-  };
+  }
 
   /**
    * Extend original init method inorder to support Zookeeper BasicAuthAccessControlFactory
