@@ -1,13 +1,14 @@
 <div align="right">
-    <img src="assets/guinsoolab-badge.png" width="60" alt="badge">
+    <img src="https://raw.githubusercontent.com/GuinsooLab/glab/main/src/images/guinsoolab-badge.png" height="60" alt="badge">
+    <br />
 </div>
 <div align="center">
-    <img src="assets/hurricanedb.svg" width="120" alt="hurricanedb"/>
-    <br/>
-    <small>a real-time distributed OLAP engine, powered by Apache Pinot</small>
+    <img src="https://raw.githubusercontent.com/GuinsooLab/glab/main/src/images/guinsoolab-hurricanedb.svg" alt="logo" height="100" />
+    <br />
+    <br />
 </div>
 
-# [HurricaneDB](https://guinsoolab.github.io/glab/#/app/hurricaneDB)
+# HurricaneDB
 
 HurricaneDB is a real-time distributed OLAP datastore, built to deliver scalable real-time analytics with low latency. It can ingest from batch data sources (such as Hadoop HDFS, Amazon S3, Azure ADLS, Google Cloud Storage) as well as stream data sources (such as Apache Kafka).
 
