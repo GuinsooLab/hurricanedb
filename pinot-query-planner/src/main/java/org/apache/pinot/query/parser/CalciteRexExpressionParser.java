@@ -18,10 +18,12 @@
  */
 package org.apache.pinot.query.parser;
 
-import com.google.common.base.Preconditions;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.pinot.common.request.Expression;
 import org.apache.pinot.common.request.ExpressionType;
@@ -30,6 +32,7 @@ import org.apache.pinot.common.request.PinotQuery;
 import org.apache.pinot.common.utils.request.RequestUtils;
 import org.apache.pinot.query.planner.logical.RexExpression;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.sql.FilterKind;
 import org.apache.pinot.sql.parsers.SqlCompilationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +47,14 @@ import org.slf4j.LoggerFactory;
  */
 public class CalciteRexExpressionParser {
   private static final Logger LOGGER = LoggerFactory.getLogger(CalciteRexExpressionParser.class);
+  private static final Map<String, String> CANONICAL_NAME_TO_SPECIAL_KEY_MAP;
+
+  static {
+    CANONICAL_NAME_TO_SPECIAL_KEY_MAP = new HashMap<>();
+    for (FilterKind filterKind : FilterKind.values()) {
+      CANONICAL_NAME_TO_SPECIAL_KEY_MAP.put(canonicalizeFunctionNameInternal(filterKind.name()), filterKind.name());
+    }
+  }
 
   private CalciteRexExpressionParser() {
     // do not instantiate.
@@ -88,30 +99,27 @@ public class CalciteRexExpressionParser {
     return selectExpr;
   }
 
-  private static List<Expression> convertOrderByList(RexExpression.FunctionCall rexCall, PinotQuery pinotQuery) {
-    Preconditions.checkState(rexCall.getKind() == SqlKind.ORDER_BY);
+  public static List<Expression> convertOrderByList(List<RexExpression> rexInputRefs,
+      List<RelFieldCollation.Direction> directions, PinotQuery pinotQuery) {
     List<Expression> orderByExpr = new ArrayList<>();
 
-    final Iterator<RexExpression> iterator = rexCall.getFunctionOperands().iterator();
-    while (iterator.hasNext()) {
-      final RexExpression next = iterator.next();
-      orderByExpr.add(convertOrderBy(next, pinotQuery));
+    for (int i = 0; i < rexInputRefs.size(); i++) {
+      orderByExpr.add(convertOrderBy(rexInputRefs.get(i), directions.get(i), pinotQuery));
     }
     return orderByExpr;
   }
 
-  private static Expression convertOrderBy(RexExpression rexNode, PinotQuery pinotQuery) {
-    final SqlKind kind = rexNode.getKind();
+  private static Expression convertOrderBy(RexExpression rexNode, RelFieldCollation.Direction direction,
+      PinotQuery pinotQuery) {
     Expression expression;
-    switch (kind) {
+    switch (direction) {
       case DESCENDING:
-        RexExpression.FunctionCall rexCall = (RexExpression.FunctionCall) rexNode;
-        expression = RequestUtils.getFunctionExpression("DESC");
-        expression.getFunctionCall().addToOperands(toExpression(rexCall.getFunctionOperands().get(0), pinotQuery));
+        expression = getFunctionExpression("DESC");
+        expression.getFunctionCall().addToOperands(toExpression(rexNode, pinotQuery));
         break;
-      case IDENTIFIER:
+      case ASCENDING:
       default:
-        expression = RequestUtils.getFunctionExpression("ASC");
+        expression = getFunctionExpression("ASC");
         expression.getFunctionCall().addToOperands(toExpression(rexNode, pinotQuery));
         break;
     }
@@ -121,7 +129,7 @@ public class CalciteRexExpressionParser {
   private static Expression convertDistinctAndSelectListToFunctionExpression(RexExpression.FunctionCall rexCall,
       PinotQuery pinotQuery) {
     String functionName = AggregationFunctionType.DISTINCT.getName();
-    Expression functionExpression = RequestUtils.getFunctionExpression(functionName);
+    Expression functionExpression = getFunctionExpression(functionName);
     for (RexExpression node : rexCall.getFunctionOperands()) {
       Expression columnExpression = toExpression(node, pinotQuery);
       if (columnExpression.getType() == ExpressionType.IDENTIFIER && columnExpression.getIdentifier().getName()
@@ -155,6 +163,8 @@ public class CalciteRexExpressionParser {
   }
 
   private static Expression rexLiteralToExpression(RexExpression.Literal rexLiteral) {
+    // TODO: currently literals are encoded as strings for V1, remove this and use directly literal type when it
+    // supports strong-type in V1.
     return RequestUtils.getLiteralExpression(rexLiteral.getValue());
   }
 
@@ -171,10 +181,9 @@ public class CalciteRexExpressionParser {
         return compileAndExpression(rexCall, pinotQuery);
       case OR:
         return compileOrExpression(rexCall, pinotQuery);
-      case COUNT:
-      case OTHER:
       case OTHER_FUNCTION:
-      case DOT:
+        functionName = rexCall.getFunctionName();
+        break;
       default:
         functionName = functionKind.name();
         break;
@@ -186,7 +195,7 @@ public class CalciteRexExpressionParser {
       operands.add(toExpression(childNode, pinotQuery));
     }
     ParserUtils.validateFunction(functionName, operands);
-    Expression functionExpression = RequestUtils.getFunctionExpression(canonicalizeFunctionName(functionName));
+    Expression functionExpression = getFunctionExpression(functionName);
     functionExpression.getFunctionCall().setOperands(operands);
     return functionExpression;
   }
@@ -204,7 +213,7 @@ public class CalciteRexExpressionParser {
         operands.add(toExpression(childNode, pinotQuery));
       }
     }
-    Expression andExpression = RequestUtils.getFunctionExpression(SqlKind.AND.name());
+    Expression andExpression = getFunctionExpression(SqlKind.AND.name());
     andExpression.getFunctionCall().setOperands(operands);
     return andExpression;
   }
@@ -222,19 +231,31 @@ public class CalciteRexExpressionParser {
         operands.add(toExpression(childNode, pinotQuery));
       }
     }
-    Expression andExpression = RequestUtils.getFunctionExpression(SqlKind.OR.name());
+    Expression andExpression = getFunctionExpression(SqlKind.OR.name());
     andExpression.getFunctionCall().setOperands(operands);
     return andExpression;
+  }
+
+  private static Expression getFunctionExpression(String canonicalName) {
+    Expression expression = new Expression(ExpressionType.FUNCTION);
+    Function function = new Function(canonicalizeFunctionName(canonicalName));
+    expression.setFunctionCall(function);
+    return expression;
+  }
+
+  private static String canonicalizeFunctionName(String functionName) {
+    String canonicalizeName = canonicalizeFunctionNameInternal(functionName);
+    return CANONICAL_NAME_TO_SPECIAL_KEY_MAP.getOrDefault(canonicalizeName, canonicalizeName);
   }
 
   /**
    * Canonicalize Calcite generated Logical function names.
    */
-  private static String canonicalizeFunctionName(String functionName) {
+  private static String canonicalizeFunctionNameInternal(String functionName) {
     if (functionName.endsWith("0")) {
-      return functionName.substring(0, functionName.length() - 1);
+      return functionName.substring(0, functionName.length() - 1).replace("_", "").toLowerCase();
     } else {
-      return functionName;
+      return functionName.replace("_", "").toLowerCase();
     }
   }
 }

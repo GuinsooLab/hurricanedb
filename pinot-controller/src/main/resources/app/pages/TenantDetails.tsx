@@ -19,10 +19,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { makeStyles } from '@material-ui/core/styles';
-import { FormControlLabel, Grid, Switch, Tooltip } from '@material-ui/core';
+import { Box, Button, FormControlLabel, Grid, Switch, Tooltip, Typography } from '@material-ui/core';
 import { RouteComponentProps, useHistory, useLocation } from 'react-router-dom';
 import { UnControlled as CodeMirror } from 'react-codemirror2';
-import { TableData } from 'Models';
+import { DISPLAY_SEGMENT_STATUS, TableData, TableSegmentJobs } from 'Models';
 import AppLoader from '../components/AppLoader';
 import CustomizedTables from '../components/Table';
 import TableToolbar from '../components/TableToolbar';
@@ -40,6 +40,8 @@ import Confirm from '../components/Confirm';
 import { NotificationContext } from '../components/Notification/NotificationContext';
 import Utils from '../utils/Utils';
 import InfoOutlinedIcon from '@material-ui/icons/InfoOutlined';
+import { get } from "lodash";
+import { SegmentStatusRenderer } from '../components/SegmentStatusRenderer';
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -72,6 +74,10 @@ const useStyles = makeStyles((theme) => ({
     border: '1px #BDCCD9 solid',
     borderRadius: 4,
     marginBottom: 20
+  },
+  copyIdButton: {
+    paddingBlock: 0,
+    marginLeft: 10
   }
 }));
 
@@ -138,6 +144,7 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
   const [actionType, setActionType] = useState(null);
   const [showReloadStatusModal, setShowReloadStatusModal] = useState(false);
   const [reloadStatusData, setReloadStatusData] = useState(null);
+  const [tableJobsData, setTableJobsData] = useState<TableSegmentJobs | null>(null);
   const [showRebalanceServerModal, setShowRebalanceServerModal] = useState(false);
   const [schemaJSONFormat, setSchemaJSONFormat] = useState(false);
 
@@ -169,7 +176,24 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
       columns: ["Instance Name", "# of segments"],
       records: instanceRecords
     });
-    setSegmentList({columns, records});
+
+    const segmentTableRows = [];
+    records.forEach(([name, status]) =>
+      segmentTableRows.push([
+        name,
+        {
+          customRenderer: (
+            <SegmentStatusRenderer
+              segmentName={name}
+              tableName={tableName}
+              status={status as DISPLAY_SEGMENT_STATUS}
+            />
+          ),
+        },
+      ])
+    );
+
+    setSegmentList({columns, records: segmentTableRows});
     fetchTableSchema();
   };
 
@@ -255,9 +279,9 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
     }
   };
 
-  const syncResponse = (result) => {
+  const syncResponse = (result, customMessage?: React.ReactNode) => {
     if(result.status){
-      dispatch({type: 'success', message: result.status, show: true});
+      dispatch({type: 'success', message: customMessage || result.status, show: true});
       fetchTableData();
       setShowEditConfig(false);
     } else {
@@ -319,19 +343,62 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
 
   const reloadSegments = async () => {
     const result = await PinotMethodUtils.reloadAllSegmentsOp(tableName, tableType);
-    syncResponse(result);
+
+    let reloadJobId = null;
+
+    try {
+      // extract reloadJobId from response
+      const statusResponseObj = JSON.parse(result.status.replace("Segment reload details: ", ""))
+      reloadJobId = get(statusResponseObj, `${tableName}.reloadJobId`, null)
+    } catch {
+      reloadJobId = null;
+    }
+
+    const handleCopyReloadJobId = () => {
+      if(!reloadJobId) {
+        return;
+      }
+      navigator.clipboard.writeText(reloadJobId);
+    }
+
+    const customMessage = (
+      <Box>
+        <Typography variant='inherit'>{result.status}</Typography>
+        <Button 
+          className={classes.copyIdButton} 
+          variant="outlined" 
+          color="inherit" 
+          size="small" 
+          onClick={handleCopyReloadJobId}
+        >
+          Copy Id
+        </Button>
+      </Box>
+    )
+    
+    syncResponse(result, reloadJobId && customMessage);
   };
 
   const handleReloadStatus = async () => {
-    const result = await PinotMethodUtils.reloadStatusOp(tableName, tableType);
-    if(result.error){
+    try{
+      setShowReloadStatusModal(true);
+      const [reloadStatusData, tableJobsData] = await Promise.all([
+        PinotMethodUtils.reloadStatusOp(tableName, tableType),
+        PinotMethodUtils.fetchTableJobs(tableName, "RELOAD_SEGMENT,RELOAD_ALL_SEGMENTS"),
+      ]);
+
+      if(reloadStatusData.error || tableJobsData.error) {
+        dispatch({type: 'error', message: reloadStatusData.error || tableJobsData.error, show: true});
+        setShowReloadStatusModal(false);
+        return;
+      }
+      
+      setReloadStatusData(reloadStatusData);
+      setTableJobsData(tableJobsData);
+    } catch(error) {
+      dispatch({type: 'error', message: error, show: true});
       setShowReloadStatusModal(false);
-      dispatch({type: 'error', message: result.error, show: true});
-      setShowReloadStatusModal(false);
-      return;
     }
-    setShowReloadStatusModal(true);
-    setReloadStatusData(result);
   };
 
   const handleRebalanceBrokers = () => {
@@ -497,10 +564,8 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
             </SimpleAccordion>
           </div>
           <CustomizedTables
-            title="Segments"
+            title={"Segments - " + segmentList.records.length}
             data={segmentList}
-            isPagination={false}
-            noOfRows={segmentList.records.length}
             baseURL={
               tenantName && `/tenants/${tenantName}/table/${tableName}/` ||
               instanceName && `/instance/${instanceName}/table/${tableName}/` ||
@@ -516,8 +581,6 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
             <CustomizedTables
               title="Table Schema"
               data={tableSchema}
-              isPagination={false}
-              noOfRows={tableSchema.records.length}
               showSearchBox={true}
               inAccordionFormat={true}
               accordionToggleObject={{
@@ -547,10 +610,8 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
           </div>
           }
           <CustomizedTables
-            title="Instance Count"
+            title={"Instance Count - " + instanceCountData.records.length}
             data={instanceCountData}
-            isPagination={false}
-            noOfRows={instanceCountData.records.length}
             showSearchBox={true}
             inAccordionFormat={true}
           />
@@ -567,7 +628,8 @@ const TenantPageDetails = ({ match }: RouteComponentProps<Props>) => {
         showReloadStatusModal &&
         <ReloadStatusOp
           hideModal={()=>{setShowReloadStatusModal(false); setReloadStatusData(null)}}
-          data={reloadStatusData}
+          reloadStatusData={reloadStatusData}
+          tableJobsData={tableJobsData}
         />
       }
       {showRebalanceServerModal &&

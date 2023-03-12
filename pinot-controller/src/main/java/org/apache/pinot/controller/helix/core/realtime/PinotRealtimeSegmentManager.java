@@ -27,16 +27,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import org.I0Itec.zkclient.IZkChildListener;
-import org.I0Itec.zkclient.IZkDataListener;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.helix.PropertyPathConfig;
-import org.apache.helix.PropertyType;
-import org.apache.helix.ZNRecord;
-import org.apache.helix.manager.zk.ZNRecordSerializer;
-import org.apache.helix.manager.zk.ZkClient;
+import org.apache.helix.PropertyPathBuilder;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.HelixPropertyListener;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.datamodel.serializer.ZNRecordSerializer;
+import org.apache.helix.zookeeper.impl.client.ZkClient;
+import org.apache.helix.zookeeper.zkclient.IZkChildListener;
+import org.apache.helix.zookeeper.zkclient.IZkDataListener;
 import org.apache.pinot.common.Utils;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metadata.instance.InstanceZKMetadata;
@@ -47,6 +46,7 @@ import org.apache.pinot.common.utils.HLCSegmentName;
 import org.apache.pinot.common.utils.SegmentName;
 import org.apache.pinot.common.utils.config.TableConfigUtils;
 import org.apache.pinot.common.utils.helix.HelixHelper;
+import org.apache.pinot.controller.ControllerConf;
 import org.apache.pinot.controller.LeadControllerManager;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.PinotTableIdealStateBuilder;
@@ -82,13 +82,15 @@ public class PinotRealtimeSegmentManager implements HelixPropertyListener, IZkCh
   private ZkClient _zkClient;
   private ControllerMetrics _controllerMetrics;
   private final LeadControllerManager _leadControllerManager;
+  private final ControllerConf _controllerConf;
 
   public PinotRealtimeSegmentManager(PinotHelixResourceManager pinotManager,
-      LeadControllerManager leadControllerManager) {
+      LeadControllerManager leadControllerManager, ControllerConf controllerConf) {
     _pinotHelixResourceManager = pinotManager;
     _leadControllerManager = leadControllerManager;
+    _controllerConf = controllerConf;
     String clusterName = _pinotHelixResourceManager.getHelixClusterName();
-    _propertyStorePath = PropertyPathConfig.getPath(PropertyType.PROPERTYSTORE, clusterName);
+    _propertyStorePath = PropertyPathBuilder.propertyStore(clusterName);
     _tableConfigPath = _propertyStorePath + TABLE_CONFIG;
   }
 
@@ -97,9 +99,19 @@ public class PinotRealtimeSegmentManager implements HelixPropertyListener, IZkCh
 
     LOGGER.info("Starting realtime segments manager, adding a listener on the property store table configs path.");
     String zkUrl = _pinotHelixResourceManager.getHelixZkURL();
-    _zkClient = new ZkClient(zkUrl, ZkClient.DEFAULT_SESSION_TIMEOUT, ZkClient.DEFAULT_CONNECTION_TIMEOUT);
+    int zkClientSessionTimeoutMs =
+        _controllerConf.getProperty(CommonConstants.Helix.ZkClient.ZK_CLIENT_SESSION_TIMEOUT_MS_CONFIG,
+            CommonConstants.Helix.ZkClient.DEFAULT_SESSION_TIMEOUT_MS);
+    int zkClientConnectionTimeoutMs =
+        _controllerConf.getProperty(CommonConstants.Helix.ZkClient.ZK_CLIENT_CONNECTION_TIMEOUT_MS_CONFIG,
+            CommonConstants.Helix.ZkClient.DEFAULT_CONNECT_TIMEOUT_MS);
+    _zkClient = new ZkClient.Builder()
+        .setZkServer(zkUrl)
+        .setSessionTimeout(zkClientSessionTimeoutMs)
+        .setConnectionTimeout(zkClientConnectionTimeoutMs)
+        .build();
     _zkClient.setZkSerializer(new ZNRecordSerializer());
-    _zkClient.waitUntilConnected(CommonConstants.Helix.ZkClient.DEFAULT_CONNECT_TIMEOUT_SEC, TimeUnit.SECONDS);
+    _zkClient.waitUntilConnected(zkClientConnectionTimeoutMs, TimeUnit.MILLISECONDS);
 
     // Subscribe to any data/child changes to property
     _zkClient.subscribeChildChanges(_tableConfigPath, this);

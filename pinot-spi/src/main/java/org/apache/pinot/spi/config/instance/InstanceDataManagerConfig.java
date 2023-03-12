@@ -62,4 +62,10 @@ public interface InstanceDataManagerConfig {
   boolean isStreamSegmentDownloadUntar();
 
   long getStreamSegmentDownloadUntarRateLimit();
+
+  int getDeletedSegmentsCacheSize();
+
+  int getDeletedSegmentsCacheTtlMinutes();
+
+  String getSegmentPeerDownloadScheme();
 }

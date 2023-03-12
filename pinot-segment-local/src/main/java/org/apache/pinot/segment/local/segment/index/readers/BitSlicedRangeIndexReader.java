@@ -20,7 +20,6 @@ package org.apache.pinot.segment.local.segment.index.readers;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import javax.annotation.Nullable;
 import org.apache.pinot.segment.local.segment.creator.impl.inv.BitSlicedRangeIndexCreator;
 import org.apache.pinot.segment.local.utils.FPOrdering;
 import org.apache.pinot.segment.spi.ColumnMetadata;
@@ -37,10 +36,9 @@ public class BitSlicedRangeIndexReader implements RangeIndexReader<ImmutableRoar
   private final long _offset;
   private final long _min;
   private final long _max;
-  private final long _numDocs;
+  private final int _numDocs;
 
-  public BitSlicedRangeIndexReader(PinotDataBuffer dataBuffer,
-      ColumnMetadata metadata) {
+  public BitSlicedRangeIndexReader(PinotDataBuffer dataBuffer, ColumnMetadata metadata) {
     _dataBuffer = dataBuffer;
     long offset = 0;
     int version = dataBuffer.getInt(offset);
@@ -49,82 +47,147 @@ public class BitSlicedRangeIndexReader implements RangeIndexReader<ImmutableRoar
     _min = dataBuffer.getLong(offset);
     offset += Long.BYTES;
     _offset = offset;
-    _max = metadata.hasDictionary()
-        ? metadata.getCardinality() - 1
-        : ((Number) metadata.getMaxValue()).longValue();
+    // TODO: Read max from header to prevent cases where max value is not available in the column metadata
+    if (metadata.hasDictionary()) {
+      _max = metadata.getCardinality() - 1;
+    } else {
+      Number maxValue = (Number) metadata.getMaxValue();
+      _max = maxValue != null ? maxValue.longValue() : Long.MAX_VALUE;
+    }
     _numDocs = metadata.getTotalDocs();
   }
 
   @Override
   public int getNumMatchingDocs(int min, int max) {
+    // TODO: Handle this before reading the range index
+    if (min > max || min > _max || max < _min) {
+      return 0;
+    }
     return queryRangeBitmapCardinality(Math.max(min, _min) - _min, max - _min, _max - _min);
   }
 
   @Override
   public int getNumMatchingDocs(long min, long max) {
+    // TODO: Handle this before reading the range index
+    if (min > max || min > _max || max < _min) {
+      return 0;
+    }
     return queryRangeBitmapCardinality(Math.max(min, _min) - _min, max - _min, _max - _min);
   }
 
   @Override
   public int getNumMatchingDocs(float min, float max) {
+    // TODO: Handle this before reading the range index
+    if (min > max) {
+      return 0;
+    }
     return queryRangeBitmapCardinality(FPOrdering.ordinalOf(min), FPOrdering.ordinalOf(max), 0xFFFFFFFFL);
   }
 
   @Override
   public int getNumMatchingDocs(double min, double max) {
+    // TODO: Handle this before reading the range index
+    if (min > max) {
+      return 0;
+    }
     return queryRangeBitmapCardinality(FPOrdering.ordinalOf(min), FPOrdering.ordinalOf(max), 0xFFFFFFFFFFFFFFFFL);
   }
 
   @Override
+  public int getNumMatchingDocs(int value) {
+    if (value < _min) {
+      return 0;
+    }
+    return queryRangeBitmapCardinality(value - _min, _max - _min);
+  }
+
+  @Override
+  public int getNumMatchingDocs(long value) {
+    if (value < _min) {
+      return 0;
+    }
+    return queryRangeBitmapCardinality(value - _min, _max - _min);
+  }
+
+  @Override
+  public int getNumMatchingDocs(float value) {
+    return queryRangeBitmapCardinality(FPOrdering.ordinalOf(value), 0xFFFFFFFFL);
+  }
+
+  @Override
+  public int getNumMatchingDocs(double value) {
+    return queryRangeBitmapCardinality(FPOrdering.ordinalOf(value), 0xFFFFFFFFFFFFFFFFL);
+  }
+
+  @Override
   public ImmutableRoaringBitmap getMatchingDocIds(int min, int max) {
+    // TODO: Handle this before reading the range index
+    if (min > max || min > _max || max < _min) {
+      return new MutableRoaringBitmap();
+    }
     return queryRangeBitmap(Math.max(min, _min) - _min, max - _min, _max - _min);
   }
 
   @Override
   public ImmutableRoaringBitmap getMatchingDocIds(long min, long max) {
+    // TODO: Handle this before reading the range index
+    if (min > max || min > _max || max < _min) {
+      return new MutableRoaringBitmap();
+    }
     return queryRangeBitmap(Math.max(min, _min) - _min, max - _min, _max - _min);
   }
 
   @Override
   public ImmutableRoaringBitmap getMatchingDocIds(float min, float max) {
+    // TODO: Handle this before reading the range index
+    if (min > max) {
+      return new MutableRoaringBitmap();
+    }
     return queryRangeBitmap(FPOrdering.ordinalOf(min), FPOrdering.ordinalOf(max), 0xFFFFFFFFL);
   }
 
   @Override
   public ImmutableRoaringBitmap getMatchingDocIds(double min, double max) {
+    // TODO: Handle this before reading the range index
+    if (min > max) {
+      return new MutableRoaringBitmap();
+    }
     return queryRangeBitmap(FPOrdering.ordinalOf(min), FPOrdering.ordinalOf(max), 0xFFFFFFFFFFFFFFFFL);
   }
 
-  // this index supports exact matches, so always return null for partial matches
-
-  @Nullable
   @Override
-  public ImmutableRoaringBitmap getPartiallyMatchingDocIds(int min, int max) {
-    return null;
+  public ImmutableRoaringBitmap getMatchingDocIds(int value) {
+    if (value < _min) {
+      return new MutableRoaringBitmap();
+    }
+    return queryRangeBitmap(value - _min, _max - _min);
   }
 
-  @Nullable
   @Override
-  public ImmutableRoaringBitmap getPartiallyMatchingDocIds(long min, long max) {
-    return null;
+  public ImmutableRoaringBitmap getMatchingDocIds(long value) {
+    if (value < _min) {
+      return new MutableRoaringBitmap();
+    }
+    return queryRangeBitmap(value - _min, _max - _min);
   }
 
-  @Nullable
   @Override
-  public ImmutableRoaringBitmap getPartiallyMatchingDocIds(float min, float max) {
-    return null;
+  public ImmutableRoaringBitmap getMatchingDocIds(float value) {
+    return queryRangeBitmap(FPOrdering.ordinalOf(value), 0xFFFFFFFFL);
   }
 
-  @Nullable
   @Override
-  public ImmutableRoaringBitmap getPartiallyMatchingDocIds(double min, double max) {
-    return null;
+  public ImmutableRoaringBitmap getMatchingDocIds(double value) {
+    return queryRangeBitmap(FPOrdering.ordinalOf(value), 0xFFFFFFFFFFFFFFFFL);
   }
 
   private ImmutableRoaringBitmap queryRangeBitmap(long min, long max, long columnMax) {
     RangeBitmap rangeBitmap = mapRangeBitmap();
     if (Long.compareUnsigned(max, columnMax) < 0) {
       if (Long.compareUnsigned(min, 0) > 0) {
+        if (min == max) {
+          return rangeBitmap.eq(min).toMutableRoaringBitmap();
+        }
         return rangeBitmap.between(min, max).toMutableRoaringBitmap();
       }
       return rangeBitmap.lte(max).toMutableRoaringBitmap();
@@ -133,8 +196,17 @@ public class BitSlicedRangeIndexReader implements RangeIndexReader<ImmutableRoar
         return rangeBitmap.gte(min).toMutableRoaringBitmap();
       }
       MutableRoaringBitmap all = new MutableRoaringBitmap();
-      all.add(0, _numDocs);
+      all.add(0L, _numDocs);
       return all;
+    }
+  }
+
+  private ImmutableRoaringBitmap queryRangeBitmap(long value, long columnMax) {
+    RangeBitmap rangeBitmap = mapRangeBitmap();
+    if (Long.compareUnsigned(value, columnMax) < 0) {
+      return rangeBitmap.eq(value).toMutableRoaringBitmap();
+    } else {
+      return new MutableRoaringBitmap();
     }
   }
 
@@ -142,6 +214,9 @@ public class BitSlicedRangeIndexReader implements RangeIndexReader<ImmutableRoar
     RangeBitmap rangeBitmap = mapRangeBitmap();
     if (Long.compareUnsigned(max, columnMax) < 0) {
       if (Long.compareUnsigned(min, 0) > 0) {
+        if (min == max) {
+          return (int) rangeBitmap.eqCardinality(min);
+        }
         return (int) rangeBitmap.betweenCardinality(min, max);
       }
       return (int) rangeBitmap.lteCardinality(max);
@@ -149,7 +224,16 @@ public class BitSlicedRangeIndexReader implements RangeIndexReader<ImmutableRoar
       if (Long.compareUnsigned(min, 0) > 0) {
         return (int) rangeBitmap.gteCardinality(min);
       }
-      return (int) _numDocs;
+      return _numDocs;
+    }
+  }
+
+  private int queryRangeBitmapCardinality(long value, long columnMax) {
+    RangeBitmap rangeBitmap = mapRangeBitmap();
+    if (Long.compareUnsigned(value, columnMax) < 0) {
+      return (int) rangeBitmap.eqCardinality(value);
+    } else {
+      return 0;
     }
   }
 

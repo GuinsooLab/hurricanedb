@@ -24,23 +24,31 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.apache.commons.io.FileUtils;
+import org.apache.helix.model.IdealState;
 import org.apache.http.HttpStatus;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.utils.FileUploadDownloadClient;
+import org.apache.pinot.common.utils.HashUtil;
 import org.apache.pinot.controller.ControllerConf;
+import org.apache.pinot.spi.config.table.IndexingConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.config.table.ingestion.IngestionConfig;
+import org.apache.pinot.spi.config.table.ingestion.StreamIngestionConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.ReadMode;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
@@ -55,13 +63,11 @@ import static org.testng.Assert.assertTrue;
 
 
 /**
- * Integration test that extends RealtimeClusterIntegrationTest but uses low-level Kafka consumer.
+ * Integration test for low-level Kafka consumer.
  * TODO: Add separate module-level tests and remove the randomness of this test
  */
-public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegrationTest {
+public class LLCRealtimeClusterIntegrationTest extends BaseRealtimeClusterIntegrationTest {
   private static final String CONSUMER_DIRECTORY = "/tmp/consumer-test";
-  private static final String TEST_UPDATED_INVERTED_INDEX_QUERY =
-      "SELECT COUNT(*) FROM mytable WHERE DivActualElapsedTime = 305";
   private static final List<String> UPDATED_INVERTED_INDEX_COLUMNS = Collections.singletonList("DivActualElapsedTime");
   private static final long RANDOM_SEED = System.currentTimeMillis();
   private static final Random RANDOM = new Random(RANDOM_SEED);
@@ -74,11 +80,6 @@ public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegratio
 
   @Override
   protected boolean injectTombstones() {
-    return true;
-  }
-
-  @Override
-  protected boolean useLlc() {
     return true;
   }
 
@@ -110,6 +111,19 @@ public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegratio
       configuration.setProperty(CommonConstants.Server.CONFIG_OF_ENABLE_SPLIT_COMMIT, true);
       configuration.setProperty(CommonConstants.Server.CONFIG_OF_ENABLE_COMMIT_END_WITH_METADATA, true);
     }
+  }
+
+  @Override
+  protected IngestionConfig getIngestionConfig() {
+    IngestionConfig ingestionConfig = new IngestionConfig();
+    ingestionConfig.setStreamIngestionConfig(
+        new StreamIngestionConfig(Collections.singletonList(getStreamConfigMap())));
+    return ingestionConfig;
+  }
+
+  @Override
+  protected Map<String, String> getStreamConfigs() {
+    return null;
   }
 
   @Override
@@ -155,17 +169,17 @@ public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegratio
         if (changeCrc) {
           changeCrcInSegmentZKMetadata(tableName, segmentTarFile.toString());
         }
-        assertEquals(fileUploadDownloadClient
-            .uploadSegment(uploadSegmentHttpURI, segmentTarFile.getName(), segmentTarFile, tableName,
-                TableType.REALTIME).getStatusCode(), HttpStatus.SC_OK);
+        assertEquals(
+            fileUploadDownloadClient.uploadSegment(uploadSegmentHttpURI, segmentTarFile.getName(), segmentTarFile,
+                tableName, TableType.REALTIME).getStatusCode(), HttpStatus.SC_OK);
       } else {
         // Upload segments in parallel
         ExecutorService executorService = Executors.newFixedThreadPool(numSegments);
         List<Future<Integer>> futures = new ArrayList<>(numSegments);
         for (File segmentTarFile : segmentTarFiles) {
-          futures.add(executorService.submit(() -> fileUploadDownloadClient
-              .uploadSegment(uploadSegmentHttpURI, segmentTarFile.getName(), segmentTarFile, tableName,
-                  TableType.REALTIME).getStatusCode()));
+          futures.add(executorService.submit(
+              () -> fileUploadDownloadClient.uploadSegment(uploadSegmentHttpURI, segmentTarFile.getName(),
+                  segmentTarFile, tableName, TableType.REALTIME).getStatusCode()));
         }
         executorService.shutdown();
         for (Future<Integer> future : futures) {
@@ -234,35 +248,6 @@ public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegratio
     }
   }
 
-  @Test
-  public void testInvertedIndexTriggering()
-      throws Exception {
-    long numTotalDocs = getCountStarResult();
-
-    JsonNode queryResponse = postQuery(TEST_UPDATED_INVERTED_INDEX_QUERY);
-    assertEquals(queryResponse.get("totalDocs").asLong(), numTotalDocs);
-    assertTrue(queryResponse.get("numEntriesScannedInFilter").asLong() > 0L);
-
-    TableConfig tableConfig = getRealtimeTableConfig();
-    tableConfig.getIndexingConfig().setInvertedIndexColumns(UPDATED_INVERTED_INDEX_COLUMNS);
-    updateTableConfig(tableConfig);
-    reloadRealtimeTable(getTableName());
-
-    TestUtils.waitForCondition(aVoid -> {
-      try {
-        JsonNode queryResponse1 = postQuery(TEST_UPDATED_INVERTED_INDEX_QUERY);
-        // Total docs should not change during reload
-        assertEquals(queryResponse1.get("totalDocs").asLong(), numTotalDocs);
-        assertEquals(queryResponse1.get("numConsumingSegmentsQueried").asLong(), 2);
-        assertTrue(queryResponse1.get("minConsumingFreshnessTimeMs").asLong() > _startTime);
-        assertTrue(queryResponse1.get("minConsumingFreshnessTimeMs").asLong() < System.currentTimeMillis());
-        return queryResponse1.get("numEntriesScannedInFilter").asLong() == 0;
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
-    }, 600_000L, "Failed to generate inverted index");
-  }
-
   @Test(expectedExceptions = IOException.class)
   public void testAddHLCTableShouldFail()
       throws IOException {
@@ -275,6 +260,122 @@ public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegratio
   public void testReload()
       throws Exception {
     testReload(false);
+  }
+
+  @Test
+  public void testAddRemoveDictionaryAndInvertedIndex()
+      throws Exception {
+    String query = "SELECT COUNT(*) FROM myTable WHERE ActualElapsedTime = -9999";
+    long numTotalDocs = getCountStarResult();
+
+    JsonNode queryResponse = postQuery(query);
+    assertEquals(queryResponse.get("totalDocs").asLong(), numTotalDocs);
+    // Full table scan without dictionary
+    assertEquals(queryResponse.get("numEntriesScannedInFilter").asLong(), numTotalDocs);
+    long queryResult = queryResponse.get("resultTable").get("rows").get(0).get(0).asLong();
+
+    // Enable dictionary and inverted index.
+    TableConfig tableConfig = getRealtimeTableConfig();
+    IndexingConfig indexingConfig = tableConfig.getIndexingConfig();
+    assertNotNull(indexingConfig.getNoDictionaryColumns());
+    assertNotNull(indexingConfig.getInvertedIndexColumns());
+    indexingConfig.getNoDictionaryColumns().remove("ActualElapsedTime");
+    indexingConfig.getInvertedIndexColumns().add("ActualElapsedTime");
+    updateTableConfig(tableConfig);
+    String enableDictReloadId = reloadTableAndValidateResponse(getTableName(), TableType.REALTIME, false);
+    TestUtils.waitForCondition(aVoid -> {
+      try {
+        // Query result and total docs should not change during reload
+        JsonNode queryResponse1 = postQuery(query);
+        assertEquals(queryResponse1.get("resultTable").get("rows").get(0).get(0).asLong(), queryResult);
+        assertEquals(queryResponse1.get("totalDocs").asLong(), numTotalDocs);
+
+        long numConsumingSegmentsQueried = queryResponse1.get("numConsumingSegmentsQueried").asLong();
+        long minConsumingFreshnessTimeMs = queryResponse1.get("minConsumingFreshnessTimeMs").asLong();
+        return numConsumingSegmentsQueried == 2 && minConsumingFreshnessTimeMs > _startTime
+            && minConsumingFreshnessTimeMs < System.currentTimeMillis() && isReloadJobCompleted(enableDictReloadId);
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }, 600_000L, "Failed to generate dictionary and inverted index");
+    // numEntriesScannedInFilter should be zero with inverted index
+    queryResponse = postQuery(query);
+    assertEquals(queryResponse.get("numEntriesScannedInFilter").asLong(), 0L);
+
+    // Disable dictionary and inverted index.
+    indexingConfig.getNoDictionaryColumns().add("ActualElapsedTime");
+    indexingConfig.getInvertedIndexColumns().remove("ActualElapsedTime");
+    updateTableConfig(tableConfig);
+    String disableDictReloadId = reloadTableAndValidateResponse(getTableName(), TableType.REALTIME, false);
+    TestUtils.waitForCondition(aVoid -> {
+      try {
+        // Query result and total docs should not change during reload
+        JsonNode queryResponse1 = postQuery(query);
+        assertEquals(queryResponse1.get("resultTable").get("rows").get(0).get(0).asLong(), queryResult);
+        assertEquals(queryResponse1.get("totalDocs").asLong(), numTotalDocs);
+        return isReloadJobCompleted(disableDictReloadId);
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }, 60_000L, "Failed to remove dictionary and inverted index");
+    // Should get back to full table scan
+    queryResponse = postQuery(query);
+    assertEquals(queryResponse.get("numEntriesScannedInFilter").asLong(), numTotalDocs);
+  }
+
+  @Test
+  public void testReset()
+      throws Exception {
+    super.testReset(TableType.REALTIME);
+  }
+
+  @Test
+  public void testForceCommit()
+      throws Exception {
+    Set<String> consumingSegments = getConsumingSegmentsFromIdealState(getTableName() + "_REALTIME");
+    String jobId = forceCommit(getTableName());
+
+    TestUtils.waitForCondition(aVoid -> {
+      try {
+        if (isForceCommitJobCompleted(jobId)) {
+          assertTrue(_controllerStarter.getHelixResourceManager()
+              .getOnlineSegmentsFromIdealState(getTableName() + "_REALTIME", false).containsAll(consumingSegments));
+          return true;
+        }
+        return false;
+      } catch (Exception e) {
+        return false;
+      }
+    }, 60000L, "Error verifying force commit operation on table!");
+  }
+
+  public Set<String> getConsumingSegmentsFromIdealState(String tableNameWithType) {
+    IdealState tableIdealState = _controllerStarter.getHelixResourceManager().getTableIdealState(tableNameWithType);
+    Map<String, Map<String, String>> segmentAssignment = tableIdealState.getRecord().getMapFields();
+    Set<String> matchingSegments = new HashSet<>(HashUtil.getHashMapCapacity(segmentAssignment.size()));
+    for (Map.Entry<String, Map<String, String>> entry : segmentAssignment.entrySet()) {
+      Map<String, String> instanceStateMap = entry.getValue();
+      if (instanceStateMap.containsValue(CommonConstants.Helix.StateModel.SegmentStateModel.CONSUMING)) {
+        matchingSegments.add(entry.getKey());
+      }
+    }
+    return matchingSegments;
+  }
+
+  public boolean isForceCommitJobCompleted(String forceCommitJobId)
+      throws Exception {
+    String jobStatusResponse = sendGetRequest(_controllerRequestURLBuilder.forForceCommitJobStatus(forceCommitJobId));
+    JsonNode jobStatus = JsonUtils.stringToJsonNode(jobStatusResponse);
+
+    assertEquals(jobStatus.get("jobId").asText(), forceCommitJobId);
+    assertEquals(jobStatus.get("jobType").asText(), "FORCE_COMMIT");
+    return jobStatus.get("numberOfSegmentsYetToBeCommitted").asInt(-1) == 0;
+  }
+
+  private String forceCommit(String tableName)
+      throws Exception {
+    String response = sendPostRequest(_controllerRequestURLBuilder.forTableForceCommit(tableName), null);
+    return JsonUtils.stringToJsonNode(response).get("forceCommitJobId").asText();
   }
 
   @Test

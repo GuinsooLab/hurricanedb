@@ -19,9 +19,6 @@
 package org.apache.pinot.server.starter.helix;
 
 import com.google.common.base.Preconditions;
-import java.io.File;
-import java.util.concurrent.locks.Lock;
-import org.apache.commons.io.FileUtils;
 import org.apache.helix.NotificationContext;
 import org.apache.helix.model.Message;
 import org.apache.helix.participant.statemachine.StateModel;
@@ -94,15 +91,17 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
 
       TableDataManager tableDataManager = _instanceDataManager.getTableDataManager(realtimeTableName);
       Preconditions.checkNotNull(tableDataManager);
+      tableDataManager.onConsumingToOnline(segmentNameStr);
       SegmentDataManager acquiredSegment = tableDataManager.acquireSegment(segmentNameStr);
       // For this transition to be correct in helix, we should already have a segment that is consuming
       if (acquiredSegment == null) {
         throw new RuntimeException("Segment " + segmentNameStr + " + not present ");
       }
 
+      // TODO: https://github.com/apache/pinot/issues/10049
       try {
         if (!(acquiredSegment instanceof LLRealtimeSegmentDataManager)) {
-          // We found a LLC segment that is not consuming right now, must be that we already swapped it with a
+          // We found an LLC segment that is not consuming right now, must be that we already swapped it with a
           // segment that has been built. Nothing to do for this state transition.
           _logger
               .info("Segment {} not an instance of LLRealtimeSegmentDataManager. Reporting success for the transition",
@@ -130,7 +129,7 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
       String realtimeTableName = message.getResourceName();
       String segmentName = message.getPartitionName();
       try {
-        _instanceDataManager.removeSegment(realtimeTableName, segmentName);
+        _instanceDataManager.offloadSegment(realtimeTableName, segmentName);
       } catch (Exception e) {
         _logger.error("Caught exception in state transition from CONSUMING -> OFFLINE for resource: {}, partition: {}",
             realtimeTableName, segmentName, e);
@@ -141,6 +140,11 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
     @Transition(from = "CONSUMING", to = "DROPPED")
     public void onBecomeDroppedFromConsuming(Message message, NotificationContext context) {
       _logger.info("SegmentOnlineOfflineStateModel.onBecomeDroppedFromConsuming() : " + message);
+      String realtimeTableName = message.getResourceName();
+      String segmentNameStr = message.getPartitionName();
+      TableDataManager tableDataManager = _instanceDataManager.getTableDataManager(realtimeTableName);
+      Preconditions.checkNotNull(tableDataManager);
+      tableDataManager.onConsumingToDropped(segmentNameStr);
       try {
         onBecomeOfflineFromConsuming(message, context);
         onBecomeDroppedFromOffline(message, context);
@@ -185,7 +189,7 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
       String tableNameWithType = message.getResourceName();
       String segmentName = message.getPartitionName();
       try {
-        _instanceDataManager.removeSegment(tableNameWithType, segmentName);
+        _instanceDataManager.offloadSegment(tableNameWithType, segmentName);
       } catch (Exception e) {
         _logger.error("Caught exception in state transition from ONLINE -> OFFLINE for resource: {}, partition: {}",
             tableNameWithType, segmentName, e);
@@ -199,22 +203,11 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
       _logger.info("SegmentOnlineOfflineStateModel.onBecomeDroppedFromOffline() : " + message);
       String tableNameWithType = message.getResourceName();
       String segmentName = message.getPartitionName();
-
-      // This method might modify the file on disk. Use segment lock to prevent race condition
-      Lock segmentLock = SegmentLocks.getSegmentLock(tableNameWithType, segmentName);
       try {
-        segmentLock.lock();
-
-        File segmentDir = _instanceDataManager.getSegmentDataDirectory(tableNameWithType, segmentName);
-        if (segmentDir.exists()) {
-          FileUtils.deleteQuietly(segmentDir);
-          _logger.info("Deleted segment directory {}", segmentDir);
-        }
+        _instanceDataManager.deleteSegment(tableNameWithType, segmentName);
       } catch (final Exception e) {
-        _logger.error("Cannot delete the segment : " + segmentName + " from local directory!\n" + e.getMessage(), e);
+        _logger.error("Cannot drop the segment : " + segmentName + " from server!\n" + e.getMessage(), e);
         Utils.rethrowException(e);
-      } finally {
-        segmentLock.unlock();
       }
     }
 

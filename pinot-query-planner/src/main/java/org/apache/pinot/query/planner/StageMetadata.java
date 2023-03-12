@@ -23,9 +23,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.pinot.core.routing.TimeBoundaryInfo;
 import org.apache.pinot.core.transport.ServerInstance;
+import org.apache.pinot.query.planner.stage.AggregateNode;
+import org.apache.pinot.query.planner.stage.SortNode;
 import org.apache.pinot.query.planner.stage.StageNode;
 import org.apache.pinot.query.planner.stage.TableScanNode;
+import org.apache.pinot.query.planner.stage.WindowNode;
+import org.apache.pinot.query.routing.VirtualServer;
 
 
 /**
@@ -42,20 +47,48 @@ public class StageMetadata implements Serializable {
   private List<String> _scannedTables;
 
   // used for assigning server/worker nodes.
-  private List<ServerInstance> _serverInstances;
+  private List<VirtualServer> _serverInstances;
 
-  // used for table scan stage.
-  private Map<ServerInstance, List<String>> _serverInstanceToSegmentsMap;
+  // used for table scan stage - we use ServerInstance instead of VirtualServer
+  // here because all virtual servers that share a server instance will have the
+  // same segments on them
+  private Map<ServerInstance, Map<String, List<String>>> _serverInstanceToSegmentsMap;
+
+  // time boundary info
+  private TimeBoundaryInfo _timeBoundaryInfo;
+
+  // whether a stage requires singleton instance to execute, e.g. stage contains global reduce (sort/agg) operator.
+  private boolean _requiresSingletonInstance;
 
   public StageMetadata() {
     _scannedTables = new ArrayList<>();
     _serverInstances = new ArrayList<>();
     _serverInstanceToSegmentsMap = new HashMap<>();
+    _timeBoundaryInfo = null;
+    _requiresSingletonInstance = false;
   }
 
   public void attach(StageNode stageNode) {
     if (stageNode instanceof TableScanNode) {
       _scannedTables.add(((TableScanNode) stageNode).getTableName());
+    }
+    if (stageNode instanceof AggregateNode) {
+      AggregateNode aggNode = (AggregateNode) stageNode;
+      _requiresSingletonInstance = _requiresSingletonInstance || (aggNode.getGroupSet().size() == 0
+          && AggregateNode.isFinalStage(aggNode));
+    }
+    if (stageNode instanceof SortNode) {
+      SortNode sortNode = (SortNode) stageNode;
+      _requiresSingletonInstance = _requiresSingletonInstance || (sortNode.getCollationKeys().size() > 0
+          && sortNode.getOffset() != -1);
+    }
+    if (stageNode instanceof WindowNode) {
+      WindowNode windowNode = (WindowNode) stageNode;
+      // TODO: Figure out a way to parallelize Empty OVER() and OVER(ORDER BY) so the computation can be done across
+      //       multiple nodes.
+      // Empty OVER() and OVER(ORDER BY) need to be processed on a singleton node. OVER() with PARTITION BY can be
+      // distributed as no global ordering is required across partitions.
+      _requiresSingletonInstance = _requiresSingletonInstance || (windowNode.getGroupSet().size() == 0);
     }
   }
 
@@ -67,19 +100,39 @@ public class StageMetadata implements Serializable {
   // attached physical plan context.
   // -----------------------------------------------
 
-  public Map<ServerInstance, List<String>> getServerInstanceToSegmentsMap() {
+  public Map<ServerInstance, Map<String, List<String>>> getServerInstanceToSegmentsMap() {
     return _serverInstanceToSegmentsMap;
   }
 
-  public void setServerInstanceToSegmentsMap(Map<ServerInstance, List<String>> serverInstanceToSegmentsMap) {
+  public void setServerInstanceToSegmentsMap(
+      Map<ServerInstance, Map<String, List<String>>> serverInstanceToSegmentsMap) {
     _serverInstanceToSegmentsMap = serverInstanceToSegmentsMap;
   }
 
-  public List<ServerInstance> getServerInstances() {
+  public List<VirtualServer> getServerInstances() {
     return _serverInstances;
   }
 
-  public void setServerInstances(List<ServerInstance> serverInstances) {
+  public void setServerInstances(List<VirtualServer> serverInstances) {
     _serverInstances = serverInstances;
+  }
+
+  public TimeBoundaryInfo getTimeBoundaryInfo() {
+    return _timeBoundaryInfo;
+  }
+
+  public boolean isRequiresSingletonInstance() {
+    return _requiresSingletonInstance;
+  }
+
+  public void setTimeBoundaryInfo(TimeBoundaryInfo timeBoundaryInfo) {
+    _timeBoundaryInfo = timeBoundaryInfo;
+  }
+
+  @Override
+  public String toString() {
+    return "StageMetadata{" + "_scannedTables=" + _scannedTables + ", _serverInstances=" + _serverInstances
+        + ", _serverInstanceToSegmentsMap=" + _serverInstanceToSegmentsMap + ", _timeBoundaryInfo=" + _timeBoundaryInfo
+        + '}';
   }
 }

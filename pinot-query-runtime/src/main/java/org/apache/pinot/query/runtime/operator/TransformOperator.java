@@ -19,53 +19,60 @@
 package org.apache.pinot.query.runtime.operator;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import java.util.ArrayList;
 import java.util.List;
 import javax.annotation.Nullable;
-import org.apache.pinot.common.function.FunctionInfo;
-import org.apache.pinot.common.function.FunctionInvoker;
-import org.apache.pinot.common.function.FunctionRegistry;
-import org.apache.pinot.common.function.FunctionUtils;
+import org.apache.pinot.common.datablock.DataBlock;
 import org.apache.pinot.common.utils.DataSchema;
-import org.apache.pinot.core.common.Operator;
-import org.apache.pinot.core.common.datablock.BaseDataBlock;
-import org.apache.pinot.core.operator.BaseOperator;
 import org.apache.pinot.query.planner.logical.RexExpression;
+import org.apache.pinot.query.routing.VirtualServerAddress;
 import org.apache.pinot.query.runtime.blocks.TransferableBlock;
 import org.apache.pinot.query.runtime.blocks.TransferableBlockUtils;
+import org.apache.pinot.query.runtime.operator.operands.TransformOperand;
+import org.apache.pinot.query.runtime.operator.utils.FunctionInvokeUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
  * This basic {@code TransformOperator} implement basic transformations.
+ *
+ * This operator performs three kinds of transform
+ * - InputRef transform, which reads from certain input column based on column index
+ * - Literal transform, which outputs literal value
+ * - Function transform, which runs a function on function operands. Function operands and be any of 3 the transform.
+ * Note: Function transform only runs functions from v1 engine scalar function factory, which only does argument count
+ * and canonicalized function name matching (lower case).
  */
-public class TransformOperator extends BaseOperator<TransferableBlock> {
+public class TransformOperator extends MultiStageOperator {
   private static final String EXPLAIN_NAME = "TRANSFORM";
-  private final BaseOperator<TransferableBlock> _upstreamOperator;
-  private final List<TransformOperands> _transformOperandsList;
+  private final MultiStageOperator _upstreamOperator;
+  private static final Logger LOGGER = LoggerFactory.getLogger(TransformOperator.class);
+  private final List<TransformOperand> _transformOperandsList;
   private final int _resultColumnSize;
+  // TODO: Check type matching between resultSchema and the actual result.
   private final DataSchema _resultSchema;
+  private TransferableBlock _upstreamErrorBlock;
 
-  public TransformOperator(BaseOperator<TransferableBlock> upstreamOperator, List<RexExpression> transforms,
-      DataSchema upstreamDataSchema) {
+  public TransformOperator(MultiStageOperator upstreamOperator, DataSchema resultSchema, List<RexExpression> transforms,
+      DataSchema upstreamDataSchema, long requestId, int stageId, VirtualServerAddress serverAddress) {
+    super(requestId, stageId, serverAddress);
+    Preconditions.checkState(!transforms.isEmpty(), "transform operand should not be empty.");
+    Preconditions.checkState(resultSchema.size() == transforms.size(),
+        "result schema size:" + resultSchema.size() + " doesn't match transform operand size:" + transforms.size());
     _upstreamOperator = upstreamOperator;
     _resultColumnSize = transforms.size();
     _transformOperandsList = new ArrayList<>(_resultColumnSize);
     for (RexExpression rexExpression : transforms) {
-      _transformOperandsList.add(TransformOperands.toFunctionOperands(rexExpression, upstreamDataSchema));
+      _transformOperandsList.add(TransformOperand.toTransformOperand(rexExpression, upstreamDataSchema));
     }
-    String[] columnNames = new String[_resultColumnSize];
-    DataSchema.ColumnDataType[] columnDataTypes = new DataSchema.ColumnDataType[_resultColumnSize];
-    for (int i = 0; i < _resultColumnSize; i++) {
-      columnNames[i] = _transformOperandsList.get(i).getResultName();
-      columnDataTypes[i] = _transformOperandsList.get(i).getResultType();
-    }
-    _resultSchema = new DataSchema(columnNames, columnDataTypes);
+    _resultSchema = resultSchema;
   }
 
   @Override
-  public List<Operator> getChildOperators() {
-    // WorkerExecutor doesn't use getChildOperators, returns null here.
-    return null;
+  public List<MultiStageOperator> getChildOperators() {
+    return ImmutableList.of(_upstreamOperator);
   }
 
   @Nullable
@@ -77,7 +84,8 @@ public class TransformOperator extends BaseOperator<TransferableBlock> {
   @Override
   protected TransferableBlock getNextBlock() {
     try {
-      return transform(_upstreamOperator.nextBlock());
+      TransferableBlock block = _upstreamOperator.nextBlock();
+      return transform(block);
     } catch (Exception e) {
       return TransferableBlockUtils.getErrorTransferableBlock(e);
     }
@@ -85,101 +93,31 @@ public class TransformOperator extends BaseOperator<TransferableBlock> {
 
   private TransferableBlock transform(TransferableBlock block)
       throws Exception {
-    if (TransferableBlockUtils.isEndOfStream(block)) {
-      return TransferableBlockUtils.getEndOfStreamTransferableBlock();
+    if (block.isErrorBlock()) {
+      _upstreamErrorBlock = block;
     }
+    if (_upstreamErrorBlock != null) {
+      return _upstreamErrorBlock;
+    }
+
+    if (TransferableBlockUtils.isEndOfStream(block)) {
+      return block;
+    }
+
+    if (TransferableBlockUtils.isNoOpBlock(block)) {
+      return block;
+    }
+
     List<Object[]> resultRows = new ArrayList<>();
     List<Object[]> container = block.getContainer();
     for (Object[] row : container) {
       Object[] resultRow = new Object[_resultColumnSize];
       for (int i = 0; i < _resultColumnSize; i++) {
-        resultRow[i] = _transformOperandsList.get(i).apply(row);
+        resultRow[i] =
+            FunctionInvokeUtils.convert(_transformOperandsList.get(i).apply(row), _resultSchema.getColumnDataType(i));
       }
       resultRows.add(resultRow);
     }
-    return new TransferableBlock(resultRows, _resultSchema, BaseDataBlock.Type.ROW);
-  }
-
-  private static abstract class TransformOperands {
-    protected String _resultName;
-    protected DataSchema.ColumnDataType _resultType;
-
-    public static TransformOperands toFunctionOperands(RexExpression rexExpression, DataSchema dataSchema) {
-      if (rexExpression instanceof RexExpression.InputRef) {
-        return new ReferenceOperands((RexExpression.InputRef) rexExpression, dataSchema);
-      } else if (rexExpression instanceof RexExpression.FunctionCall) {
-        return new FunctionOperands((RexExpression.FunctionCall) rexExpression, dataSchema);
-      } else {
-        throw new UnsupportedOperationException("Unsupported RexExpression: " + rexExpression);
-      }
-    }
-
-    public String getResultName() {
-      return _resultName;
-    }
-
-    public DataSchema.ColumnDataType getResultType() {
-      return _resultType;
-    }
-
-    public abstract Object apply(Object[] row);
-  }
-
-  private static class FunctionOperands extends TransformOperands {
-    private final List<TransformOperands> _childOperandList;
-    private final FunctionInvoker _functionInvoker;
-    private final Object[] _reusableOperandHolder;
-
-    public FunctionOperands(RexExpression.FunctionCall functionCall, DataSchema dataSchema) {
-      // iteratively resolve child operands.
-      List<RexExpression> operandExpressions = functionCall.getFunctionOperands();
-      _childOperandList = new ArrayList<>(operandExpressions.size());
-      for (RexExpression childRexExpression : operandExpressions) {
-        _childOperandList.add(toFunctionOperands(childRexExpression, dataSchema));
-      }
-      FunctionInfo functionInfo = FunctionRegistry.getFunctionInfo(
-          OperatorUtils.canonicalizeFunctionName(functionCall.getFunctionName()), operandExpressions.size());
-      Preconditions.checkNotNull(functionInfo, "Cannot find function with Name: "
-          + functionCall.getFunctionName());
-      _functionInvoker = new FunctionInvoker(functionInfo);
-      _resultName = computeColumnName(functionCall.getFunctionName(), _childOperandList);
-      _resultType = FunctionUtils.getColumnDataType(_functionInvoker.getResultClass());
-      _reusableOperandHolder = new Object[operandExpressions.size()];
-    }
-
-    @Override
-    public Object apply(Object[] row) {
-      for (int i = 0; i < _childOperandList.size(); i++) {
-        _reusableOperandHolder[i] = _childOperandList.get(i).apply(row);
-      }
-      return _functionInvoker.invoke(_reusableOperandHolder);
-    }
-
-    private static String computeColumnName(String functionName, List<TransformOperands> childOperands) {
-      StringBuilder sb = new StringBuilder();
-      sb.append(functionName);
-      sb.append("(");
-      for (TransformOperands operands : childOperands) {
-        sb.append(operands.getResultName());
-        sb.append(",");
-      }
-      sb.append(")");
-      return sb.toString();
-    }
-  }
-
-  private static class ReferenceOperands extends TransformOperands {
-    private final int _refIndex;
-
-    public ReferenceOperands(RexExpression.InputRef inputRef, DataSchema dataSchema) {
-      _refIndex = inputRef.getIndex();
-      _resultType = dataSchema.getColumnDataType(_refIndex);
-      _resultName = dataSchema.getColumnName(_refIndex);
-    }
-
-    @Override
-    public Object apply(Object[] row) {
-      return row[_refIndex];
-    }
+    return new TransferableBlock(resultRows, _resultSchema, DataBlock.Type.ROW);
   }
 }

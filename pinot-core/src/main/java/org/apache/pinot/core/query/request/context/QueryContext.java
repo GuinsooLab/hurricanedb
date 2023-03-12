@@ -35,6 +35,7 @@ import org.apache.pinot.common.request.context.FilterContext;
 import org.apache.pinot.common.request.context.FunctionContext;
 import org.apache.pinot.common.request.context.OrderByExpressionContext;
 import org.apache.pinot.common.request.context.RequestContextUtils;
+import org.apache.pinot.common.utils.config.QueryOptionsUtils;
 import org.apache.pinot.core.plan.maker.InstancePlanMakerImplV2;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunction;
 import org.apache.pinot.core.query.aggregation.function.AggregationFunctionFactory;
@@ -117,6 +118,10 @@ public class QueryContext {
   private int _minServerGroupTrimSize = InstancePlanMakerImplV2.DEFAULT_MIN_SERVER_GROUP_TRIM_SIZE;
   // Trim threshold to use for server combine for SQL GROUP BY
   private int _groupTrimThreshold = InstancePlanMakerImplV2.DEFAULT_GROUPBY_TRIM_THRESHOLD;
+  // Whether null handling is enabled
+  private boolean _nullHandlingEnabled;
+  // Whether server returns the final result
+  private boolean _serverReturnFinalResult;
 
   private QueryContext(@Nullable String tableName, @Nullable QueryContext subquery,
       List<ExpressionContext> selectExpressions, List<String> aliasList, @Nullable FilterContext filter,
@@ -255,7 +260,7 @@ public class QueryContext {
   /**
    * Returns the filtered aggregation expressions for the query.
    */
-  public boolean isHasFilteredAggregations() {
+  public boolean hasFilteredAggregations() {
     return _hasFilteredAggregations;
   }
 
@@ -370,6 +375,22 @@ public class QueryContext {
 
   public void setGroupTrimThreshold(int groupTrimThreshold) {
     _groupTrimThreshold = groupTrimThreshold;
+  }
+
+  public boolean isNullHandlingEnabled() {
+    return _nullHandlingEnabled;
+  }
+
+  public void setNullHandlingEnabled(boolean nullHandlingEnabled) {
+    _nullHandlingEnabled = nullHandlingEnabled;
+  }
+
+  public boolean isServerReturnFinalResult() {
+    return _serverReturnFinalResult;
+  }
+
+  public void setServerReturnFinalResult(boolean serverReturnFinalResult) {
+    _serverReturnFinalResult = serverReturnFinalResult;
   }
 
   /**
@@ -488,6 +509,8 @@ public class QueryContext {
       QueryContext queryContext =
           new QueryContext(_tableName, _subquery, _selectExpressions, _aliasList, _filter, _groupByExpressions,
               _havingFilter, _orderByExpressions, _limit, _offset, _queryOptions, _expressionOverrideHints, _explain);
+      queryContext.setNullHandlingEnabled(QueryOptionsUtils.isNullHandlingEnabled(_queryOptions));
+      queryContext.setServerReturnFinalResult(QueryOptionsUtils.isServerReturnFinalResult(_queryOptions));
 
       // Pre-calculate the aggregation functions and columns for the query
       generateAggregationFunctions(queryContext);
@@ -513,10 +536,6 @@ public class QueryContext {
         FunctionContext aggregation = pair.getLeft();
         FilterContext filter = pair.getRight();
         if (filter != null) {
-          // Filtered aggregation
-          if (_groupByExpressions != null) {
-            throw new IllegalStateException("GROUP BY with FILTER clauses is not supported");
-          }
           queryContext._hasFilteredAggregations = true;
         }
         int functionIndex = filteredAggregationFunctions.size();

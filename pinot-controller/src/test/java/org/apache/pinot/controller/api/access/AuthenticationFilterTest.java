@@ -19,12 +19,17 @@
 
 package org.apache.pinot.controller.api.access;
 
-import java.util.Optional;
+import java.lang.reflect.Method;
+import javax.ws.rs.DELETE;
+import javax.ws.rs.GET;
+import javax.ws.rs.POST;
+import javax.ws.rs.PUT;
 import javax.ws.rs.core.MultivaluedHashMap;
 import javax.ws.rs.core.MultivaluedMap;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertNull;
 
 
 public class AuthenticationFilterTest {
@@ -40,8 +45,7 @@ public class AuthenticationFilterTest {
     queryParams.putSingle("tableName", "D");
     queryParams.putSingle("tableNameWithType", "E");
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("A"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "A");
   }
 
   @Test
@@ -53,8 +57,7 @@ public class AuthenticationFilterTest {
     queryParams.putSingle("tableName", "D");
     queryParams.putSingle("tableNameWithType", "E");
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("B"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "B");
   }
 
   @Test
@@ -65,8 +68,7 @@ public class AuthenticationFilterTest {
     queryParams.putSingle("tableName", "D");
     queryParams.putSingle("tableNameWithType", "E");
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("C"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "C");
   }
 
   @Test
@@ -76,8 +78,7 @@ public class AuthenticationFilterTest {
     queryParams.putSingle("tableName", "D");
     queryParams.putSingle("tableNameWithType", "E");
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("D"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "D");
   }
 
   @Test
@@ -86,8 +87,7 @@ public class AuthenticationFilterTest {
     MultivaluedMap<String, String> queryParams = new MultivaluedHashMap<>();
     queryParams.putSingle("tableNameWithType", "E");
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("E"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "E");
   }
 
   @Test
@@ -95,15 +95,51 @@ public class AuthenticationFilterTest {
     MultivaluedMap<String, String> pathParams = new MultivaluedHashMap<>();
     MultivaluedMap<String, String> queryParams = new MultivaluedHashMap<>();
     queryParams.putSingle("schemaName", "F");
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.of("F"));
+    assertEquals(AuthenticationFilter.extractTableName(pathParams, queryParams), "F");
   }
 
   @Test
   public void testExtractTableNameWithEmptyParams() {
     MultivaluedMap<String, String> pathParams = new MultivaluedHashMap<>();
     MultivaluedMap<String, String> queryParams = new MultivaluedHashMap<>();
-    Optional<String> actual = _authFilter.extractTableName(pathParams, queryParams);
-    assertEquals(actual, Optional.empty());
+    assertNull(AuthenticationFilter.extractTableName(pathParams, queryParams));
+  }
+
+  @Test
+  public void testExtractAccessTypeWithAuthAnnotation() throws Exception {
+    Method method = AuthenticationFilterTest.class.getMethod("methodWithAuthAnnotation");
+    assertEquals(AccessType.UPDATE, _authFilter.extractAccessType(method));
+  }
+
+  @Test
+  public void testExtractAccessTypeWithMissingAuthAnnotation() throws Exception {
+    Method method = AuthenticationFilterTest.class.getMethod("methodWithGet");
+    assertEquals(AccessType.READ, _authFilter.extractAccessType(method));
+    method = AuthenticationFilterTest.class.getMethod("methodWithPost");
+    assertEquals(AccessType.CREATE, _authFilter.extractAccessType(method));
+    method = AuthenticationFilterTest.class.getMethod("methodWithPut");
+    assertEquals(AccessType.UPDATE, _authFilter.extractAccessType(method));
+    method = AuthenticationFilterTest.class.getMethod("methodWithDelete");
+    assertEquals(AccessType.DELETE, _authFilter.extractAccessType(method));
+  }
+
+  @Authenticate(AccessType.UPDATE)
+  public void methodWithAuthAnnotation() {
+  }
+
+  @GET
+  public void methodWithGet() {
+  }
+
+  @PUT
+  public void methodWithPut() {
+  }
+
+  @POST
+  public void methodWithPost() {
+  }
+
+  @DELETE
+  public void methodWithDelete() {
   }
 }

@@ -19,11 +19,14 @@
 package org.apache.pinot.core.data.manager.offline;
 
 import com.google.common.cache.LoadingCache;
+import java.util.Map;
 import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.helix.HelixManager;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.restlet.resources.SegmentErrorInfo;
 import org.apache.pinot.core.data.manager.realtime.RealtimeTableDataManager;
@@ -31,7 +34,9 @@ import org.apache.pinot.segment.local.data.manager.TableDataManager;
 import org.apache.pinot.segment.local.data.manager.TableDataManagerConfig;
 import org.apache.pinot.segment.local.data.manager.TableDataManagerParams;
 import org.apache.pinot.spi.config.instance.InstanceDataManagerConfig;
-import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.stream.StreamConfigProperties;
+import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.IngestionConfigUtils;
 
 
 /**
@@ -55,8 +60,15 @@ public class TableDataManagerProvider {
   public static TableDataManager getTableDataManager(TableDataManagerConfig tableDataManagerConfig, String instanceId,
       ZkHelixPropertyStore<ZNRecord> propertyStore, ServerMetrics serverMetrics, HelixManager helixManager,
       LoadingCache<Pair<String, String>, SegmentErrorInfo> errorCache) {
+    return getTableDataManager(tableDataManagerConfig, instanceId, propertyStore, serverMetrics, helixManager,
+        errorCache, () -> true);
+  }
+
+  public static TableDataManager getTableDataManager(TableDataManagerConfig tableDataManagerConfig, String instanceId,
+      ZkHelixPropertyStore<ZNRecord> propertyStore, ServerMetrics serverMetrics, HelixManager helixManager,
+      LoadingCache<Pair<String, String>, SegmentErrorInfo> errorCache, Supplier<Boolean> isServerReadyToServeQueries) {
     TableDataManager tableDataManager;
-    switch (TableType.valueOf(tableDataManagerConfig.getTableDataManagerType())) {
+    switch (tableDataManagerConfig.getTableType()) {
       case OFFLINE:
         if (tableDataManagerConfig.isDimTable()) {
           tableDataManager = DimensionTableDataManager.createInstanceByTableName(tableDataManagerConfig.getTableName());
@@ -65,7 +77,15 @@ public class TableDataManagerProvider {
         }
         break;
       case REALTIME:
-        tableDataManager = new RealtimeTableDataManager(_segmentBuildSemaphore);
+        Map<String, String> streamConfigMap = IngestionConfigUtils.getStreamConfigMap(
+            tableDataManagerConfig.getTableConfig());
+        if (Boolean.parseBoolean(streamConfigMap.get(StreamConfigProperties.SERVER_UPLOAD_TO_DEEPSTORE))
+            && StringUtils.isEmpty(tableDataManagerConfig.getInstanceDataManagerConfig().getSegmentStoreUri())) {
+          throw new IllegalStateException(String.format("Table has enabled %s config. But the server has not "
+              + "configured the segmentstore uri. Configure the server config %s",
+              StreamConfigProperties.SERVER_UPLOAD_TO_DEEPSTORE, CommonConstants.Server.CONFIG_OF_SEGMENT_STORE_URI));
+        }
+        tableDataManager = new RealtimeTableDataManager(_segmentBuildSemaphore, isServerReadyToServeQueries);
         break;
       default:
         throw new IllegalStateException();

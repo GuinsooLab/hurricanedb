@@ -20,12 +20,12 @@ package org.apache.pinot.common.utils;
 
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import org.apache.helix.ZNRecord;
-import org.apache.helix.manager.zk.ZNRecordSerializer;
-import org.apache.helix.manager.zk.client.HelixZkClient;
-import org.apache.helix.manager.zk.client.SharedZkClientFactory;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.datamodel.serializer.ZNRecordSerializer;
+import org.apache.helix.zookeeper.impl.client.ZkClient;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.services.ServiceRole;
+import org.apache.pinot.spi.utils.CommonConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,7 +38,6 @@ public class ServiceStartableUtils {
   private static final String CLUSTER_CONFIG_ZK_PATH_TEMPLATE = "/%s/CONFIGS/CLUSTER/%s";
   private static final String PINOT_ALL_CONFIG_KEY_PREFIX = "pinot.all.";
   private static final String PINOT_INSTANCE_CONFIG_KEY_PREFIX_TEMPLATE = "pinot.%s.";
-  private static final int ZK_TIMEOUT_MS = 30_000;
 
   /**
    * Applies the ZK cluster config to the given instance config if it does not already exist.
@@ -48,11 +47,19 @@ public class ServiceStartableUtils {
    */
   public static void applyClusterConfig(PinotConfiguration instanceConfig, String zkAddress, String clusterName,
       ServiceRole serviceRole) {
-    HelixZkClient.ZkClientConfig zkClientConfig = new HelixZkClient.ZkClientConfig();
-    zkClientConfig.setZkSerializer(new ZNRecordSerializer()).setConnectInitTimeout(ZK_TIMEOUT_MS);
-    HelixZkClient zkClient = SharedZkClientFactory.getInstance()
-        .buildZkClient(new HelixZkClient.ZkConnectionConfig(zkAddress), zkClientConfig);
-    zkClient.waitUntilConnected(ZK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+    int zkClientSessionConfig =
+        instanceConfig.getProperty(CommonConstants.Helix.ZkClient.ZK_CLIENT_SESSION_TIMEOUT_MS_CONFIG,
+            CommonConstants.Helix.ZkClient.DEFAULT_SESSION_TIMEOUT_MS);
+    int zkClientConnectionTimeoutMs =
+        instanceConfig.getProperty(CommonConstants.Helix.ZkClient.ZK_CLIENT_CONNECTION_TIMEOUT_MS_CONFIG,
+            CommonConstants.Helix.ZkClient.DEFAULT_CONNECT_TIMEOUT_MS);
+    ZkClient zkClient = new ZkClient.Builder()
+        .setZkSerializer(new ZNRecordSerializer())
+        .setZkServer(zkAddress)
+        .setConnectionTimeout(zkClientConnectionTimeoutMs)
+        .setSessionTimeout(zkClientSessionConfig)
+        .build();
+    zkClient.waitUntilConnected(zkClientConnectionTimeoutMs, TimeUnit.MILLISECONDS);
 
     try {
       ZNRecord clusterConfigZNRecord =

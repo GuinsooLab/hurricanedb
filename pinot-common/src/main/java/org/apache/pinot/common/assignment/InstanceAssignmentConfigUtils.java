@@ -20,6 +20,7 @@ package org.apache.pinot.common.assignment;
 
 import com.google.common.base.Preconditions;
 import java.util.Map;
+import org.apache.pinot.common.utils.config.TableConfigUtils;
 import org.apache.pinot.common.utils.config.TagNameUtils;
 import org.apache.pinot.spi.config.table.ReplicaGroupStrategyConfig;
 import org.apache.pinot.spi.config.table.SegmentsValidationAndRetentionConfig;
@@ -43,11 +44,10 @@ public class InstanceAssignmentConfigUtils {
    * backward-compatibility) COMPLETED server tag is overridden to be different from the CONSUMING server tag.
    */
   public static boolean shouldRelocateCompletedSegments(TableConfig tableConfig) {
-    Map<InstancePartitionsType, InstanceAssignmentConfig> instanceAssignmentConfigMap =
-        tableConfig.getInstanceAssignmentConfigMap();
+    Map<String, InstanceAssignmentConfig> instanceAssignmentConfigMap = tableConfig.getInstanceAssignmentConfigMap();
     return (instanceAssignmentConfigMap != null
-        && instanceAssignmentConfigMap.get(InstancePartitionsType.COMPLETED) != null) || TagNameUtils
-        .isRelocateCompletedSegments(tableConfig.getTenantConfig());
+        && instanceAssignmentConfigMap.get(InstancePartitionsType.COMPLETED.toString()) != null)
+        || TagNameUtils.isRelocateCompletedSegments(tableConfig.getTenantConfig());
   }
 
   /**
@@ -55,22 +55,24 @@ public class InstanceAssignmentConfigUtils {
    */
   public static boolean allowInstanceAssignment(TableConfig tableConfig,
       InstancePartitionsType instancePartitionsType) {
+    if (TableConfigUtils.hasPreConfiguredInstancePartitions(tableConfig, instancePartitionsType)) {
+      return true;
+    }
     TableType tableType = tableConfig.getTableType();
-    Map<InstancePartitionsType, InstanceAssignmentConfig> instanceAssignmentConfigMap =
-        tableConfig.getInstanceAssignmentConfigMap();
+    Map<String, InstanceAssignmentConfig> instanceAssignmentConfigMap = tableConfig.getInstanceAssignmentConfigMap();
     switch (instancePartitionsType) {
       // Allow OFFLINE instance assignment if the offline table has it configured or (for backward-compatibility) is
       // using replica-group segment assignment
       case OFFLINE:
         return tableType == TableType.OFFLINE && ((instanceAssignmentConfigMap != null
-            && instanceAssignmentConfigMap.get(InstancePartitionsType.OFFLINE) != null)
+            && instanceAssignmentConfigMap.get(InstancePartitionsType.OFFLINE.toString()) != null)
             || AssignmentStrategy.REPLICA_GROUP_SEGMENT_ASSIGNMENT_STRATEGY
             .equalsIgnoreCase(tableConfig.getValidationConfig().getSegmentAssignmentStrategy()));
       // Allow CONSUMING/COMPLETED instance assignment if the real-time table has it configured
       case CONSUMING:
       case COMPLETED:
         return tableType == TableType.REALTIME && (instanceAssignmentConfigMap != null
-            && instanceAssignmentConfigMap.get(instancePartitionsType) != null);
+            && instanceAssignmentConfigMap.get(instancePartitionsType.toString()) != null);
       default:
         throw new IllegalStateException();
     }
@@ -85,10 +87,10 @@ public class InstanceAssignmentConfigUtils {
         "Instance assignment is not allowed for the given table config");
 
     // Use the instance assignment config from the table config if it exists
-    Map<InstancePartitionsType, InstanceAssignmentConfig> instanceAssignmentConfigMap =
-        tableConfig.getInstanceAssignmentConfigMap();
+    Map<String, InstanceAssignmentConfig> instanceAssignmentConfigMap = tableConfig.getInstanceAssignmentConfigMap();
     if (instanceAssignmentConfigMap != null) {
-      InstanceAssignmentConfig instanceAssignmentConfig = instanceAssignmentConfigMap.get(instancePartitionsType);
+      InstanceAssignmentConfig instanceAssignmentConfig =
+          instanceAssignmentConfigMap.get(instancePartitionsType.toString());
       if (instanceAssignmentConfig != null) {
         return instanceAssignmentConfig;
       }
@@ -102,7 +104,7 @@ public class InstanceAssignmentConfigUtils {
 
     InstanceReplicaGroupPartitionConfig replicaGroupPartitionConfig;
     SegmentsValidationAndRetentionConfig segmentConfig = tableConfig.getValidationConfig();
-    int numReplicaGroups = segmentConfig.getReplicationNumber();
+    int numReplicaGroups = tableConfig.getReplication();
     ReplicaGroupStrategyConfig replicaGroupStrategyConfig = segmentConfig.getReplicaGroupStrategyConfig();
     Preconditions.checkState(replicaGroupStrategyConfig != null, "Failed to find the replica-group strategy config");
     String partitionColumn = replicaGroupStrategyConfig.getPartitionColumn();

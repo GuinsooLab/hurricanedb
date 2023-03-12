@@ -18,10 +18,12 @@
  */
 package org.apache.pinot.plugin.filesystem;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
@@ -31,12 +33,17 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+import javax.annotation.Nullable;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.filesystem.BasePinotFS;
+import org.apache.pinot.spi.filesystem.FileMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
@@ -48,8 +55,14 @@ import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.CopyObjectResponse;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectResponse;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -65,53 +78,125 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.auth.StsAssumeRoleCredentialsProvider;
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 
 
 /**
  * Implementation of PinotFS for AWS S3 file system
  */
 public class S3PinotFS extends BasePinotFS {
-  public static final String ACCESS_KEY = "accessKey";
-  public static final String SECRET_KEY = "secretKey";
-  public static final String REGION = "region";
-  public static final String ENDPOINT = "endpoint";
-  public static final String DISABLE_ACL_CONFIG_KEY = "disableAcl";
-  public static final String SERVER_SIDE_ENCRYPTION_CONFIG_KEY = "serverSideEncryption";
-  public static final String SSE_KMS_KEY_ID_CONFIG_KEY = "ssekmsKeyId";
-  public static final String SSE_KMS_ENCRYPTION_CONTEXT_CONFIG_KEY = "ssekmsEncryptionContext";
-
   private static final Logger LOGGER = LoggerFactory.getLogger(S3PinotFS.class);
+
   private static final String DELIMITER = "/";
   public static final String S3_SCHEME = "s3://";
-  private static final boolean DEFAULT_DISABLE_ACL = true;
   private S3Client _s3Client;
-  private boolean _disableAcl = DEFAULT_DISABLE_ACL;
+  private boolean _disableAcl;
   private ServerSideEncryption _serverSideEncryption = null;
   private String _ssekmsKeyId;
   private String _ssekmsEncryptionContext;
+  private long _minObjectSizeToUploadInParts;
+  private long _multiPartUploadPartSize;
 
   @Override
   public void init(PinotConfiguration config) {
-    Preconditions.checkArgument(!isNullOrEmpty(config.getProperty(REGION)), "Region can't be null or empty");
-    String region = config.getProperty(REGION);
-    _disableAcl = config.getProperty(DISABLE_ACL_CONFIG_KEY, DEFAULT_DISABLE_ACL);
-    String serverSideEncryption = config.getProperty(SERVER_SIDE_ENCRYPTION_CONFIG_KEY);
+    S3Config s3Config = new S3Config(config);
+    Preconditions.checkArgument(StringUtils.isNotEmpty(s3Config.getRegion()), "Region can't be null or empty");
+
+    _disableAcl = s3Config.getDisableAcl();
+    setServerSideEncryption(s3Config.getServerSideEncryption(), s3Config);
+
+    AwsCredentialsProvider awsCredentialsProvider;
+    try {
+      if (StringUtils.isNotEmpty(s3Config.getAccessKey()) && StringUtils.isNotEmpty(s3Config.getSecretKey())) {
+        AwsBasicCredentials awsBasicCredentials =
+            AwsBasicCredentials.create(s3Config.getAccessKey(), s3Config.getSecretKey());
+        awsCredentialsProvider = StaticCredentialsProvider.create(awsBasicCredentials);
+      } else {
+        awsCredentialsProvider = DefaultCredentialsProvider.create();
+      }
+
+      // IAM Role based access
+      if (s3Config.isIamRoleBasedAccess()) {
+        AssumeRoleRequest.Builder assumeRoleRequestBuilder =
+            AssumeRoleRequest.builder().roleArn(s3Config.getRoleArn()).roleSessionName(s3Config.getRoleSessionName())
+                .durationSeconds(s3Config.getSessionDurationSeconds());
+        AssumeRoleRequest assumeRoleRequest;
+        if (StringUtils.isNotEmpty(s3Config.getExternalId())) {
+          assumeRoleRequest = assumeRoleRequestBuilder.externalId(s3Config.getExternalId()).build();
+        } else {
+          assumeRoleRequest = assumeRoleRequestBuilder.build();
+        }
+        StsClient stsClient =
+            StsClient.builder().region(Region.of(s3Config.getRegion())).credentialsProvider(awsCredentialsProvider)
+                .build();
+        awsCredentialsProvider =
+            StsAssumeRoleCredentialsProvider.builder().stsClient(stsClient).refreshRequest(assumeRoleRequest)
+                .asyncCredentialUpdateEnabled(s3Config.isAsyncSessionUpdateEnabled()).build();
+      }
+
+      S3ClientBuilder s3ClientBuilder =
+          S3Client.builder().region(Region.of(s3Config.getRegion())).credentialsProvider(awsCredentialsProvider);
+      if (StringUtils.isNotEmpty(s3Config.getEndpoint())) {
+        try {
+          s3ClientBuilder.endpointOverride(new URI(s3Config.getEndpoint()));
+        } catch (URISyntaxException e) {
+          throw new RuntimeException(e);
+        }
+      }
+      if (s3Config.getHttpClientBuilder() != null) {
+        s3ClientBuilder.httpClientBuilder(s3Config.getHttpClientBuilder());
+      }
+      _s3Client = s3ClientBuilder.build();
+      setMultiPartUploadConfigs(s3Config);
+    } catch (S3Exception e) {
+      throw new RuntimeException("Could not initialize S3PinotFS", e);
+    }
+  }
+
+  /**
+   * Initialized the _s3Client directly with provided client.
+   * This initialization method will not initialize the server side encryption
+   * @param s3Client s3Client to initialize with
+   */
+  public void init(S3Client s3Client) {
+    _s3Client = s3Client;
+    setMultiPartUploadConfigs(-1, -1);
+  }
+
+  /**
+   * Initialize the _s3Client directly with provided client, along with additional server side encryption related props
+   * @param s3Client s3Client to initialize with
+   * @param serverSideEncryption the server side encryption string e.g. AWS_KMS is the only supported on as of now
+   * @param serverSideEncryptionConfig properties specific to provided server side encryption type
+   */
+  public void init(S3Client s3Client, String serverSideEncryption, PinotConfiguration serverSideEncryptionConfig) {
+    _s3Client = s3Client;
+    S3Config s3Config = new S3Config(serverSideEncryptionConfig);
+    setServerSideEncryption(serverSideEncryption, s3Config);
+    setMultiPartUploadConfigs(s3Config);
+  }
+
+  private void setServerSideEncryption(@Nullable String serverSideEncryption, S3Config s3Config) {
     if (serverSideEncryption != null) {
       try {
         _serverSideEncryption = ServerSideEncryption.valueOf(serverSideEncryption);
       } catch (Exception e) {
-        throw new UnsupportedOperationException(String
-            .format("Unknown value '%s' for S3PinotFS config: 'serverSideEncryption'. Supported values are: %s",
+        throw new UnsupportedOperationException(
+            String.format("Unknown value '%s' for S3PinotFS config: 'serverSideEncryption'. Supported values are: %s",
                 serverSideEncryption, Arrays.toString(ServerSideEncryption.knownValues().toArray())));
       }
       switch (_serverSideEncryption) {
         case AWS_KMS:
-          _ssekmsKeyId = config.getProperty(SSE_KMS_KEY_ID_CONFIG_KEY);
+          _ssekmsKeyId = s3Config.getSseKmsKeyId();
           if (_ssekmsKeyId == null) {
             throw new UnsupportedOperationException(
                 "Missing required config: 'sseKmsKeyId' when AWS_KMS is used for server side encryption");
           }
-          _ssekmsEncryptionContext = config.getProperty(SSE_KMS_ENCRYPTION_CONTEXT_CONFIG_KEY);
+          _ssekmsEncryptionContext = s3Config.getSsekmsEncryptionContext();
           break;
         case AES256:
           // Todo: Support AES256.
@@ -119,40 +204,6 @@ public class S3PinotFS extends BasePinotFS {
           throw new UnsupportedOperationException("Unsupported server side encryption: " + _serverSideEncryption);
       }
     }
-    AwsCredentialsProvider awsCredentialsProvider;
-
-    try {
-      if (!isNullOrEmpty(config.getProperty(ACCESS_KEY)) && !isNullOrEmpty(config.getProperty(SECRET_KEY))) {
-        String accessKey = config.getProperty(ACCESS_KEY);
-        String secretKey = config.getProperty(SECRET_KEY);
-        AwsBasicCredentials awsBasicCredentials = AwsBasicCredentials.create(accessKey, secretKey);
-        awsCredentialsProvider = StaticCredentialsProvider.create(awsBasicCredentials);
-      } else {
-        awsCredentialsProvider = DefaultCredentialsProvider.create();
-      }
-
-      S3ClientBuilder s3ClientBuilder =
-          S3Client.builder().region(Region.of(region)).credentialsProvider(awsCredentialsProvider);
-      if (!isNullOrEmpty(config.getProperty(ENDPOINT))) {
-        String endpoint = config.getProperty(ENDPOINT);
-        try {
-          s3ClientBuilder.endpointOverride(new URI(endpoint));
-        } catch (URISyntaxException e) {
-          throw new RuntimeException(e);
-        }
-      }
-      _s3Client = s3ClientBuilder.build();
-    } catch (S3Exception e) {
-      throw new RuntimeException("Could not initialize S3PinotFS", e);
-    }
-  }
-
-  public void init(S3Client s3Client) {
-    _s3Client = s3Client;
-  }
-
-  boolean isNullOrEmpty(String target) {
-    return target == null || target.isEmpty();
   }
 
   private HeadObjectResponse getS3ObjectMetadata(URI uri)
@@ -316,9 +367,8 @@ public class S3PinotFS extends BasePinotFS {
     try {
       if (isDirectory(segmentUri)) {
         if (!forceDelete) {
-          Preconditions
-              .checkState(isEmptyDirectory(segmentUri), "ForceDelete flag is not set and directory '%s' is not empty",
-                  segmentUri);
+          Preconditions.checkState(isEmptyDirectory(segmentUri),
+              "ForceDelete flag is not set and directory '%s' is not empty", segmentUri);
         }
         String prefix = normalizeToDirectoryPrefix(segmentUri);
         ListObjectsV2Response listObjectsV2Response;
@@ -435,8 +485,48 @@ public class S3PinotFS extends BasePinotFS {
   @Override
   public String[] listFiles(URI fileUri, boolean recursive)
       throws IOException {
+    ImmutableList.Builder<String> builder = ImmutableList.builder();
+    visitFiles(fileUri, recursive, s3Object -> {
+      // TODO: Looks like S3PinotFS filters out directories, inconsistent with the other implementations.
+      // Only add files and not directories
+      if (!s3Object.key().equals(fileUri.getPath()) && !s3Object.key().endsWith(DELIMITER)) {
+        builder.add(S3_SCHEME + fileUri.getHost() + DELIMITER + getNormalizedFileKey(s3Object));
+      }
+    });
+    String[] listedFiles = builder.build().toArray(new String[0]);
+    LOGGER.info("Listed {} files from URI: {}, is recursive: {}", listedFiles.length, fileUri, recursive);
+    return listedFiles;
+  }
+
+  @Override
+  public List<FileMetadata> listFilesWithMetadata(URI fileUri, boolean recursive)
+      throws IOException {
+    ImmutableList.Builder<FileMetadata> listBuilder = ImmutableList.builder();
+    visitFiles(fileUri, recursive, s3Object -> {
+      if (!s3Object.key().equals(fileUri.getPath())) {
+        FileMetadata.Builder fileBuilder = new FileMetadata.Builder().setFilePath(
+                S3_SCHEME + fileUri.getHost() + DELIMITER + getNormalizedFileKey(s3Object))
+            .setLastModifiedTime(s3Object.lastModified().toEpochMilli()).setLength(s3Object.size())
+            .setIsDirectory(s3Object.key().endsWith(DELIMITER));
+        listBuilder.add(fileBuilder.build());
+      }
+    });
+    ImmutableList<FileMetadata> listedFiles = listBuilder.build();
+    LOGGER.info("Listed {} files from URI: {}, is recursive: {}", listedFiles.size(), fileUri, recursive);
+    return listedFiles;
+  }
+
+  private static String getNormalizedFileKey(S3Object s3Object) {
+    String fileKey = s3Object.key();
+    if (fileKey.startsWith(DELIMITER)) {
+      fileKey = fileKey.substring(1);
+    }
+    return fileKey;
+  }
+
+  private void visitFiles(URI fileUri, boolean recursive, Consumer<S3Object> visitor)
+      throws IOException {
     try {
-      ImmutableList.Builder<String> builder = ImmutableList.builder();
       String continuationToken = null;
       boolean isDone = false;
       String prefix = normalizeToDirectoryPrefix(fileUri);
@@ -457,22 +547,10 @@ public class S3PinotFS extends BasePinotFS {
         ListObjectsV2Response listObjectsV2Response = _s3Client.listObjectsV2(listObjectsV2Request);
         LOGGER.debug("Getting ListObjectsV2Response: {}", listObjectsV2Response);
         List<S3Object> filesReturned = listObjectsV2Response.contents();
-        filesReturned.stream().forEach(object -> {
-          //Only add files and not directories
-          if (!object.key().equals(fileUri.getPath()) && !object.key().endsWith(DELIMITER)) {
-            String fileKey = object.key();
-            if (fileKey.startsWith(DELIMITER)) {
-              fileKey = fileKey.substring(1);
-            }
-            builder.add(S3_SCHEME + fileUri.getHost() + DELIMITER + fileKey);
-          }
-        });
+        filesReturned.forEach(visitor);
         isDone = !listObjectsV2Response.isTruncated();
         continuationToken = listObjectsV2Response.nextContinuationToken();
       }
-      String[] listedFiles = builder.build().toArray(new String[0]);
-      LOGGER.info("Listed {} files from URI: {}, is recursive: {}", listedFiles.length, fileUri, recursive);
-      return listedFiles;
     } catch (Throwable t) {
       throw new IOException(t);
     }
@@ -493,11 +571,72 @@ public class S3PinotFS extends BasePinotFS {
   @Override
   public void copyFromLocalFile(File srcFile, URI dstUri)
       throws Exception {
-    LOGGER.info("Copy {} from local to {}", srcFile.getAbsolutePath(), dstUri);
-    URI base = getBase(dstUri);
-    String prefix = sanitizePath(base.relativize(dstUri).getPath());
-    PutObjectRequest putObjectRequest = generatePutObjectRequest(dstUri, prefix);
-    _s3Client.putObject(putObjectRequest, srcFile.toPath());
+    if (_minObjectSizeToUploadInParts > 0 && srcFile.length() > _minObjectSizeToUploadInParts) {
+      LOGGER.info("Copy {} from local to {} in parts", srcFile.getAbsolutePath(), dstUri);
+      uploadFileInParts(srcFile, dstUri);
+    } else {
+      LOGGER.info("Copy {} from local to {}", srcFile.getAbsolutePath(), dstUri);
+      String prefix = sanitizePath(getBase(dstUri).relativize(dstUri).getPath());
+      PutObjectRequest putObjectRequest = generatePutObjectRequest(dstUri, prefix);
+      _s3Client.putObject(putObjectRequest, srcFile.toPath());
+    }
+  }
+
+  private void uploadFileInParts(File srcFile, URI dstUri)
+      throws Exception {
+    String bucket = dstUri.getHost();
+    String prefix = sanitizePath(getBase(dstUri).relativize(dstUri).getPath());
+    CreateMultipartUploadResponse multipartUpload =
+        _s3Client.createMultipartUpload(CreateMultipartUploadRequest.builder().bucket(bucket).key(prefix).build());
+    String uploadId = multipartUpload.uploadId();
+    // Upload parts sequentially to overcome the 5GB limit of a single PutObject call.
+    // TODO: parts can be uploaded in parallel for higher throughput, given a thread pool.
+    try (FileInputStream inputStream = FileUtils.openInputStream(srcFile)) {
+      long totalUploaded = 0;
+      long fileSize = srcFile.length();
+      // The part number must start from 1 and no more than the max part num allowed, 10000 by default.
+      // The default configs can upload a single file of 1TB, so the if-branch should rarely happen.
+      int partNum = 1;
+      long partSizeToUse = _multiPartUploadPartSize;
+      if (partSizeToUse * S3Config.MULTI_PART_UPLOAD_MAX_PART_NUM < fileSize) {
+        partSizeToUse =
+            (fileSize + S3Config.MULTI_PART_UPLOAD_MAX_PART_NUM - 1) / S3Config.MULTI_PART_UPLOAD_MAX_PART_NUM;
+        LOGGER.info("Increased part size from {} to {} for large file size {} due to max allowed uploads {}",
+            _multiPartUploadPartSize, partSizeToUse, fileSize, S3Config.MULTI_PART_UPLOAD_MAX_PART_NUM);
+      }
+      List<CompletedPart> parts = new ArrayList<>();
+      while (totalUploaded < srcFile.length()) {
+        long nextPartSize = Math.min(partSizeToUse, fileSize - totalUploaded);
+        UploadPartResponse uploadPartResponse = _s3Client.uploadPart(
+            UploadPartRequest.builder().bucket(bucket).key(prefix).uploadId(uploadId).partNumber(partNum).build(),
+            RequestBody.fromInputStream(inputStream, nextPartSize));
+        parts.add(CompletedPart.builder().partNumber(partNum).eTag(uploadPartResponse.eTag()).build());
+        totalUploaded += nextPartSize;
+        LOGGER.debug("Uploaded part {} of size {}, with total uploaded {} and file size {}", partNum, nextPartSize,
+            totalUploaded, fileSize);
+        // set counters to upload the next part.
+        partNum++;
+      }
+      // complete the multipart upload
+      _s3Client.completeMultipartUpload(
+          CompleteMultipartUploadRequest.builder().uploadId(uploadId).bucket(bucket).key(prefix)
+              .multipartUpload(CompletedMultipartUpload.builder().parts(parts).build()).build());
+    } catch (Exception e) {
+      LOGGER.error("Failed to upload file {} to {} in parts. Abort upload request: {}", srcFile, dstUri, uploadId, e);
+      _s3Client.abortMultipartUpload(
+          AbortMultipartUploadRequest.builder().uploadId(uploadId).bucket(bucket).key(prefix).build());
+      throw e;
+    }
+  }
+
+  private void setMultiPartUploadConfigs(S3Config s3Config) {
+    setMultiPartUploadConfigs(s3Config.getMinObjectSizeForMultiPartUpload(), s3Config.getMultiPartUploadPartSize());
+  }
+
+  @VisibleForTesting
+  void setMultiPartUploadConfigs(long minObjectSizeToUploadInParts, long multiPartUploadPartSize) {
+    _minObjectSizeToUploadInParts = minObjectSizeToUploadInParts;
+    _multiPartUploadPartSize = multiPartUploadPartSize;
   }
 
   @Override
@@ -595,7 +734,7 @@ public class S3PinotFS extends BasePinotFS {
       String path = sanitizePath(uri.getPath());
       GetObjectRequest getObjectRequest = GetObjectRequest.builder().bucket(uri.getHost()).key(path).build();
 
-      return _s3Client.getObjectAsBytes(getObjectRequest).asInputStream();
+      return _s3Client.getObject(getObjectRequest);
     } catch (S3Exception e) {
       throw e;
     }
@@ -604,6 +743,7 @@ public class S3PinotFS extends BasePinotFS {
   @Override
   public void close()
       throws IOException {
+    _s3Client.close();
     super.close();
   }
 }

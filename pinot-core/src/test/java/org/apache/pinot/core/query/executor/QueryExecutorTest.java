@@ -30,9 +30,10 @@ import org.apache.helix.HelixManager;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.apache.pinot.common.metrics.ServerMetrics;
 import org.apache.pinot.common.request.InstanceRequest;
-import org.apache.pinot.common.utils.DataTable;
 import org.apache.pinot.core.data.manager.InstanceDataManager;
 import org.apache.pinot.core.data.manager.offline.TableDataManagerProvider;
+import org.apache.pinot.core.operator.blocks.InstanceResponseBlock;
+import org.apache.pinot.core.operator.blocks.results.AggregationResultsBlock;
 import org.apache.pinot.core.query.request.ServerQueryRequest;
 import org.apache.pinot.segment.local.data.manager.TableDataManager;
 import org.apache.pinot.segment.local.data.manager.TableDataManagerConfig;
@@ -53,6 +54,7 @@ import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.metrics.PinotMetricUtils;
 import org.apache.pinot.spi.utils.ReadMode;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
+import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.sql.parsers.CalciteSqlCompiler;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -61,6 +63,8 @@ import org.testng.annotations.Test;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 
 
 public class QueryExecutorTest {
@@ -68,7 +72,8 @@ public class QueryExecutorTest {
   private static final String EMPTY_JSON_DATA_PATH = "data/test_empty_data.json";
   private static final String QUERY_EXECUTOR_CONFIG_PATH = "conf/query-executor.properties";
   private static final File INDEX_DIR = new File(FileUtils.getTempDirectory(), "QueryExecutorTest");
-  private static final String TABLE_NAME = "testTable";
+  private static final String RAW_TABLE_NAME = "testTable";
+  private static final String OFFLINE_TABLE_NAME = TableNameBuilder.OFFLINE.tableNameWithType(RAW_TABLE_NAME);
   private static final int NUM_SEGMENTS_TO_GENERATE = 2;
   private static final int NUM_EMPTY_SEGMENTS_TO_GENERATE = 2;
   private static final ExecutorService QUERY_RUNNERS = Executors.newFixedThreadPool(20);
@@ -84,16 +89,16 @@ public class QueryExecutorTest {
       throws Exception {
     // Set up the segments
     FileUtils.deleteQuietly(INDEX_DIR);
-    Assert.assertTrue(INDEX_DIR.mkdirs());
+    assertTrue(INDEX_DIR.mkdirs());
     URL resourceUrl = getClass().getClassLoader().getResource(AVRO_DATA_PATH);
     Assert.assertNotNull(resourceUrl);
     File avroFile = new File(resourceUrl.getFile());
     Schema schema = SegmentTestUtils.extractSchemaFromAvroWithoutTime(avroFile);
-    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(TABLE_NAME).build();
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName(RAW_TABLE_NAME).build();
     int i = 0;
     for (; i < NUM_SEGMENTS_TO_GENERATE; i++) {
       SegmentGeneratorConfig config =
-          SegmentTestUtils.getSegmentGeneratorConfig(avroFile, FileFormat.AVRO, INDEX_DIR, TABLE_NAME, tableConfig,
+          SegmentTestUtils.getSegmentGeneratorConfig(avroFile, FileFormat.AVRO, INDEX_DIR, RAW_TABLE_NAME, tableConfig,
               schema);
       config.setSegmentNamePostfix(Integer.toString(i));
       SegmentIndexCreationDriver driver = new SegmentIndexCreationDriverImpl();
@@ -112,7 +117,7 @@ public class QueryExecutorTest {
     File jsonFile = new File(resourceUrl.getFile());
     for (; i < NUM_SEGMENTS_TO_GENERATE + NUM_EMPTY_SEGMENTS_TO_GENERATE; i++) {
       SegmentGeneratorConfig config =
-          SegmentTestUtils.getSegmentGeneratorConfig(jsonFile, FileFormat.JSON, INDEX_DIR, TABLE_NAME, tableConfig,
+          SegmentTestUtils.getSegmentGeneratorConfig(jsonFile, FileFormat.JSON, INDEX_DIR, RAW_TABLE_NAME, tableConfig,
               schema);
       config.setSegmentNamePostfix(Integer.toString(i));
       SegmentIndexCreationDriver driver = new SegmentIndexCreationDriverImpl();
@@ -125,8 +130,8 @@ public class QueryExecutorTest {
     // Mock the instance data manager
     _serverMetrics = new ServerMetrics(PinotMetricUtils.getPinotMetricsRegistry());
     TableDataManagerConfig tableDataManagerConfig = mock(TableDataManagerConfig.class);
-    when(tableDataManagerConfig.getTableDataManagerType()).thenReturn("OFFLINE");
-    when(tableDataManagerConfig.getTableName()).thenReturn(TABLE_NAME);
+    when(tableDataManagerConfig.getTableName()).thenReturn(OFFLINE_TABLE_NAME);
+    when(tableDataManagerConfig.getTableType()).thenReturn(TableType.OFFLINE);
     when(tableDataManagerConfig.getDataDir()).thenReturn(FileUtils.getTempDirectoryPath());
     InstanceDataManagerConfig instanceDataManagerConfig = mock(InstanceDataManagerConfig.class);
     when(instanceDataManagerConfig.getMaxParallelSegmentBuilds()).thenReturn(4);
@@ -143,7 +148,7 @@ public class QueryExecutorTest {
       tableDataManager.addSegment(indexSegment);
     }
     InstanceDataManager instanceDataManager = mock(InstanceDataManager.class);
-    when(instanceDataManager.getTableDataManager(TABLE_NAME)).thenReturn(tableDataManager);
+    when(instanceDataManager.getTableDataManager(OFFLINE_TABLE_NAME)).thenReturn(tableDataManager);
 
     // Set up the query executor
     resourceUrl = getClass().getClassLoader().getResource(QUERY_EXECUTOR_CONFIG_PATH);
@@ -157,38 +162,42 @@ public class QueryExecutorTest {
 
   @Test
   public void testCountQuery() {
-    String query = "SELECT COUNT(*) FROM " + TABLE_NAME;
+    String query = "SELECT COUNT(*) FROM " + OFFLINE_TABLE_NAME;
     InstanceRequest instanceRequest = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequest.setSearchSegments(_segmentNames);
-    DataTable instanceResponse = _queryExecutor.processQuery(getQueryRequest(instanceRequest), QUERY_RUNNERS);
-    Assert.assertEquals(instanceResponse.getLong(0, 0), 400002L);
+    InstanceResponseBlock instanceResponse = _queryExecutor.execute(getQueryRequest(instanceRequest), QUERY_RUNNERS);
+    assertTrue(instanceResponse.getResultsBlock() instanceof AggregationResultsBlock);
+    assertEquals(((AggregationResultsBlock) instanceResponse.getResultsBlock()).getResults().get(0), 400002L);
   }
 
   @Test
   public void testSumQuery() {
-    String query = "SELECT SUM(met) FROM " + TABLE_NAME;
+    String query = "SELECT SUM(met) FROM " + OFFLINE_TABLE_NAME;
     InstanceRequest instanceRequest = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequest.setSearchSegments(_segmentNames);
-    DataTable instanceResponse = _queryExecutor.processQuery(getQueryRequest(instanceRequest), QUERY_RUNNERS);
-    Assert.assertEquals(instanceResponse.getDouble(0, 0), 40000200000.0);
+    InstanceResponseBlock instanceResponse = _queryExecutor.execute(getQueryRequest(instanceRequest), QUERY_RUNNERS);
+    assertTrue(instanceResponse.getResultsBlock() instanceof AggregationResultsBlock);
+    assertEquals(((AggregationResultsBlock) instanceResponse.getResultsBlock()).getResults().get(0), 40000200000.0);
   }
 
   @Test
   public void testMaxQuery() {
-    String query = "SELECT MAX(met) FROM " + TABLE_NAME;
+    String query = "SELECT MAX(met) FROM " + OFFLINE_TABLE_NAME;
     InstanceRequest instanceRequest = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequest.setSearchSegments(_segmentNames);
-    DataTable instanceResponse = _queryExecutor.processQuery(getQueryRequest(instanceRequest), QUERY_RUNNERS);
-    Assert.assertEquals(instanceResponse.getDouble(0, 0), 200000.0);
+    InstanceResponseBlock instanceResponse = _queryExecutor.execute(getQueryRequest(instanceRequest), QUERY_RUNNERS);
+    assertTrue(instanceResponse.getResultsBlock() instanceof AggregationResultsBlock);
+    assertEquals(((AggregationResultsBlock) instanceResponse.getResultsBlock()).getResults().get(0), 200000.0);
   }
 
   @Test
   public void testMinQuery() {
-    String query = "SELECT MIN(met) FROM " + TABLE_NAME;
+    String query = "SELECT MIN(met) FROM " + OFFLINE_TABLE_NAME;
     InstanceRequest instanceRequest = new InstanceRequest(0L, CalciteSqlCompiler.compileToBrokerRequest(query));
     instanceRequest.setSearchSegments(_segmentNames);
-    DataTable instanceResponse = _queryExecutor.processQuery(getQueryRequest(instanceRequest), QUERY_RUNNERS);
-    Assert.assertEquals(instanceResponse.getDouble(0, 0), 0.0);
+    InstanceResponseBlock instanceResponse = _queryExecutor.execute(getQueryRequest(instanceRequest), QUERY_RUNNERS);
+    assertTrue(instanceResponse.getResultsBlock() instanceof AggregationResultsBlock);
+    assertEquals(((AggregationResultsBlock) instanceResponse.getResultsBlock()).getResults().get(0), 0.0);
   }
 
   @AfterClass

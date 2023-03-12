@@ -32,8 +32,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import javax.annotation.Nullable;
 import org.apache.pinot.common.request.context.predicate.NotInPredicate;
 import org.apache.pinot.common.utils.HashUtil;
+import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.index.reader.Dictionary;
 import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.utils.ByteArray;
@@ -50,13 +52,14 @@ public class NotInPredicateEvaluatorFactory {
    * Create a new instance of dictionary based NOT_IN predicate evaluator.
    *
    * @param notInPredicate NOT_IN predicate to evaluate
-   * @param dictionary Dictionary for the column
-   * @param dataType Data type for the column
+   * @param dictionary     Dictionary for the column
+   * @param dataType       Data type for the column
+   * @param queryContext   Query context
    * @return Dictionary based NOT_IN predicate evaluator
    */
   public static BaseDictionaryBasedPredicateEvaluator newDictionaryBasedEvaluator(NotInPredicate notInPredicate,
-      Dictionary dictionary, DataType dataType) {
-    return new DictionaryBasedNotInPredicateEvaluator(notInPredicate, dictionary, dataType);
+      Dictionary dictionary, DataType dataType, @Nullable QueryContext queryContext) {
+    return new DictionaryBasedNotInPredicateEvaluator(notInPredicate, dictionary, dataType, queryContext);
   }
 
   /**
@@ -157,9 +160,10 @@ public class NotInPredicateEvaluatorFactory {
     int[] _matchingDictIds;
     int[] _nonMatchingDictIds;
 
-    DictionaryBasedNotInPredicateEvaluator(NotInPredicate notInPredicate, Dictionary dictionary, DataType dataType) {
+    DictionaryBasedNotInPredicateEvaluator(NotInPredicate notInPredicate, Dictionary dictionary, DataType dataType,
+        @Nullable QueryContext queryContext) {
       super(notInPredicate);
-      _nonMatchingDictIdSet = PredicateUtils.getDictIdSet(notInPredicate, dictionary, dataType);
+      _nonMatchingDictIdSet = PredicateUtils.getDictIdSet(notInPredicate, dictionary, dataType, queryContext);
       _numNonMatchingDictIds = _nonMatchingDictIdSet.size();
       if (_numNonMatchingDictIds == 0) {
         _alwaysTrue = true;
@@ -167,6 +171,11 @@ public class NotInPredicateEvaluatorFactory {
         _alwaysFalse = true;
       }
       _dictionary = dictionary;
+    }
+
+    @Override
+    public int getNumMatchingItems() {
+      return -_numNonMatchingDictIds;
     }
 
     @Override
@@ -225,6 +234,11 @@ public class NotInPredicateEvaluatorFactory {
     }
 
     @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
+    }
+
+    @Override
     public DataType getDataType() {
       return DataType.INT;
     }
@@ -254,6 +268,11 @@ public class NotInPredicateEvaluatorFactory {
     LongRawValueBasedNotInPredicateEvaluator(NotInPredicate notInPredicate, LongSet nonMatchingValues) {
       super(notInPredicate);
       _nonMatchingValues = nonMatchingValues;
+    }
+
+    @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
     }
 
     @Override
@@ -289,6 +308,11 @@ public class NotInPredicateEvaluatorFactory {
     }
 
     @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
+    }
+
+    @Override
     public DataType getDataType() {
       return DataType.FLOAT;
     }
@@ -318,6 +342,11 @@ public class NotInPredicateEvaluatorFactory {
     DoubleRawValueBasedNotInPredicateEvaluator(NotInPredicate notInPredicate, DoubleSet nonMatchingValues) {
       super(notInPredicate);
       _nonMatchingValues = nonMatchingValues;
+    }
+
+    @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
     }
 
     @Override
@@ -356,6 +385,11 @@ public class NotInPredicateEvaluatorFactory {
     }
 
     @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
+    }
+
+    @Override
     public DataType getDataType() {
       return DataType.BIG_DECIMAL;
     }
@@ -375,6 +409,11 @@ public class NotInPredicateEvaluatorFactory {
     }
 
     @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
+    }
+
+    @Override
     public DataType getDataType() {
       return DataType.STRING;
     }
@@ -391,6 +430,11 @@ public class NotInPredicateEvaluatorFactory {
     BytesRawValueBasedNotInPredicateEvaluator(NotInPredicate notInPredicate, Set<ByteArray> nonMatchingValues) {
       super(notInPredicate);
       _nonMatchingValues = nonMatchingValues;
+    }
+
+    @Override
+    public int getNumMatchingItems() {
+      return -_nonMatchingValues.size();
     }
 
     @Override

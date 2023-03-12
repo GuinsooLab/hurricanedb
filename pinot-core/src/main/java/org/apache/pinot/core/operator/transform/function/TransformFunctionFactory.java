@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.core.operator.transform.function;
 
+import com.google.common.annotations.VisibleForTesting;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -61,6 +62,7 @@ import org.apache.pinot.core.operator.transform.function.TrigonometricTransformF
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.AtanTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.CosTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.CoshTransformFunction;
+import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.CotTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.DegreesTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.RadiansTransformFunction;
 import org.apache.pinot.core.operator.transform.function.TrigonometricTransformFunctions.SinTransformFunction;
@@ -70,6 +72,9 @@ import org.apache.pinot.core.operator.transform.function.TrigonometricTransformF
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.datasource.DataSource;
 import org.apache.pinot.spi.exception.BadQueryRequestException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 /**
  * Factory class for transformation functions.
@@ -78,6 +83,7 @@ public class TransformFunctionFactory {
   private TransformFunctionFactory() {
   }
 
+  private static final Logger LOGGER = LoggerFactory.getLogger(TransformFunctionFactory.class);
   private static final Map<String, Class<? extends TransformFunction>> TRANSFORM_FUNCTION_MAP = createRegistry();
 
   private static Map<String, Class<? extends TransformFunction>> createRegistry() {
@@ -104,14 +110,10 @@ public class TransformFunctionFactory {
     typeToImplementation.put(TransformFunctionType.TRUNCATE, TruncateDecimalTransformFunction.class);
 
     typeToImplementation.put(TransformFunctionType.CAST, CastTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.JSONEXTRACTSCALAR,
-        JsonExtractScalarTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.JSONEXTRACTKEY,
-        JsonExtractKeyTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.TIMECONVERT,
-        TimeConversionTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.DATETIMECONVERT,
-        DateTimeConversionTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.JSONEXTRACTSCALAR, JsonExtractScalarTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.JSONEXTRACTKEY, JsonExtractKeyTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.TIMECONVERT, TimeConversionTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.DATETIMECONVERT, DateTimeConversionTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.DATETRUNC, DateTruncTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.YEAR, DateTimeTransformFunction.Year.class);
     typeToImplementation.put(TransformFunctionType.YEAR_OF_WEEK, DateTimeTransformFunction.YearOfWeek.class);
@@ -125,20 +127,19 @@ public class TransformFunctionFactory {
     typeToImplementation.put(TransformFunctionType.MINUTE, DateTimeTransformFunction.Minute.class);
     typeToImplementation.put(TransformFunctionType.SECOND, DateTimeTransformFunction.Second.class);
     typeToImplementation.put(TransformFunctionType.MILLISECOND, DateTimeTransformFunction.Millisecond.class);
-    typeToImplementation.put(TransformFunctionType.ARRAYLENGTH,
-        ArrayLengthTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.ARRAYLENGTH, ArrayLengthTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.VALUEIN, ValueInTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.MAPVALUE, MapValueTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.INIDSET, InIdSetTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.LOOKUP, LookupTransformFunction.class);
 
+    typeToImplementation.put(TransformFunctionType.EXTRACT, ExtractTransformFunction.class);
+
     // Regexp functions
-    typeToImplementation.put(TransformFunctionType.REGEXP_EXTRACT,
-        RegexpExtractTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.REGEXP_EXTRACT, RegexpExtractTransformFunction.class);
 
     // Array functions
-    typeToImplementation.put(TransformFunctionType.ARRAYAVERAGE,
-        ArrayAverageTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.ARRAYAVERAGE, ArrayAverageTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ARRAYMAX, ArrayMaxTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ARRAYMIN, ArrayMinTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ARRAYSUM, ArraySumTransformFunction.class);
@@ -148,37 +149,31 @@ public class TransformFunctionFactory {
 
     typeToImplementation.put(TransformFunctionType.EQUALS, EqualsTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.NOT_EQUALS, NotEqualsTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.GREATER_THAN,
-        GreaterThanTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.GREATER_THAN_OR_EQUAL,
-        GreaterThanOrEqualTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.GREATER_THAN, GreaterThanTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.GREATER_THAN_OR_EQUAL, GreaterThanOrEqualTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.LESS_THAN, LessThanTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.LESS_THAN_OR_EQUAL,
-        LessThanOrEqualTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.LESS_THAN_OR_EQUAL, LessThanOrEqualTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.IN, InTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.NOT_IN, NotInTransformFunction.class);
 
     // logical functions
     typeToImplementation.put(TransformFunctionType.AND, AndOperatorTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.OR, OrOperatorTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.NOT, NotOperatorTransformFunction.class);
 
     // geo functions
     // geo constructors
-    typeToImplementation.put(TransformFunctionType.ST_GEOG_FROM_TEXT,
-        StGeogFromTextFunction.class);
-    typeToImplementation.put(TransformFunctionType.ST_GEOG_FROM_WKB,
-        StGeogFromWKBFunction.class);
-    typeToImplementation.put(TransformFunctionType.ST_GEOM_FROM_TEXT,
-        StGeomFromTextFunction.class);
-    typeToImplementation.put(TransformFunctionType.ST_GEOM_FROM_WKB,
-        StGeomFromWKBFunction.class);
+    typeToImplementation.put(TransformFunctionType.ST_GEOG_FROM_TEXT, StGeogFromTextFunction.class);
+    typeToImplementation.put(TransformFunctionType.ST_GEOG_FROM_WKB, StGeogFromWKBFunction.class);
+    typeToImplementation.put(TransformFunctionType.ST_GEOM_FROM_TEXT, StGeomFromTextFunction.class);
+    typeToImplementation.put(TransformFunctionType.ST_GEOM_FROM_WKB, StGeomFromWKBFunction.class);
     typeToImplementation.put(TransformFunctionType.ST_POINT, StPointFunction.class);
     typeToImplementation.put(TransformFunctionType.ST_POLYGON, StPolygonFunction.class);
 
     // geo measurements
     typeToImplementation.put(TransformFunctionType.ST_AREA, StAreaFunction.class);
     typeToImplementation.put(TransformFunctionType.ST_DISTANCE, StDistanceFunction.class);
-    typeToImplementation.put(TransformFunctionType.ST_GEOMETRY_TYPE,
-        StGeometryTypeFunction.class);
+    typeToImplementation.put(TransformFunctionType.ST_GEOMETRY_TYPE, StGeometryTypeFunction.class);
 
     // geo outputs
     typeToImplementation.put(TransformFunctionType.ST_AS_BINARY, StAsBinaryFunction.class);
@@ -198,13 +193,16 @@ public class TransformFunctionFactory {
 
     // null handling
     typeToImplementation.put(TransformFunctionType.IS_NULL, IsNullTransformFunction.class);
-    typeToImplementation.put(TransformFunctionType.IS_NOT_NULL,
-        IsNotNullTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.IS_NOT_NULL, IsNotNullTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.COALESCE, CoalesceTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.IS_DISTINCT_FROM, IsDistinctFromTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.IS_NOT_DISTINCT_FROM, IsNotDistinctFromTransformFunction.class);
 
     // Trignometric functions
     typeToImplementation.put(TransformFunctionType.SIN, SinTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.COS, CosTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.TAN, TanTransformFunction.class);
+    typeToImplementation.put(TransformFunctionType.COT, CotTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ASIN, AsinTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ACOS, AcosTransformFunction.class);
     typeToImplementation.put(TransformFunctionType.ATAN, AtanTransformFunction.class);
@@ -226,7 +224,7 @@ public class TransformFunctionFactory {
 
   /**
    * Initializes the factory with a set of transform function classes.
-   * <p>Should be called only once before calling {@link #get(ExpressionContext, Map)}.
+   * <p>Should be called only once before using the factory.
    *
    * @param transformFunctionClasses Set of transform function classes
    */
@@ -234,17 +232,17 @@ public class TransformFunctionFactory {
     for (Class<TransformFunction> transformFunctionClass : transformFunctionClasses) {
       TransformFunction transformFunction;
       try {
-        transformFunction = transformFunctionClass.newInstance();
-      } catch (InstantiationException | IllegalAccessException e) {
+        transformFunction = transformFunctionClass.getDeclaredConstructor().newInstance();
+      } catch (Exception e) {
         throw new RuntimeException(
-            "Caught exception while instantiating transform function from class: " + transformFunctionClass.toString(),
-            e);
+            "Caught exception while instantiating transform function from class: " + transformFunctionClass, e);
       }
       String transformFunctionName = canonicalize(transformFunction.getName());
-      if (TRANSFORM_FUNCTION_MAP.containsKey(transformFunctionName)) {
-        throw new IllegalArgumentException("Transform function: " + transformFunctionName + " already exists");
+      if (TRANSFORM_FUNCTION_MAP.put(transformFunctionName, transformFunctionClass) == null) {
+        LOGGER.info("Registering function: {} with class: {}", transformFunctionName, transformFunctionClass);
+      } else {
+        LOGGER.info("Replacing function: {} with class: {}", transformFunctionName, transformFunctionClass);
       }
-      TRANSFORM_FUNCTION_MAP.put(transformFunctionName, transformFunctionClass);
     }
   }
 
@@ -253,22 +251,11 @@ public class TransformFunctionFactory {
    *
    * @param expression Transform expression
    * @param dataSourceMap Map from column name to column data source
-   * @return Transform function
-   */
-  public static TransformFunction get(ExpressionContext expression, Map<String, DataSource> dataSourceMap) {
-    return get(null, expression, dataSourceMap);
-  }
-
-  /**
-   * Returns an instance of transform function for the given expression.
-   *
    * @param queryContext the query context if available
-   * @param expression Transform expression
-   * @param dataSourceMap Map from column name to column data source
    * @return Transform function
    */
-  public static TransformFunction get(@Nullable QueryContext queryContext, ExpressionContext expression,
-      Map<String, DataSource> dataSourceMap) {
+  public static TransformFunction get(ExpressionContext expression, Map<String, DataSource> dataSourceMap,
+      @Nullable QueryContext queryContext) {
     switch (expression.getType()) {
       case FUNCTION:
         FunctionContext function = expression.getFunction();
@@ -281,7 +268,7 @@ public class TransformFunctionFactory {
         if (transformFunctionClass != null) {
           // Transform function
           try {
-            transformFunction = transformFunctionClass.newInstance();
+            transformFunction = transformFunctionClass.getDeclaredConstructor().newInstance();
           } catch (Exception e) {
             throw new RuntimeException("Caught exception while constructing transform function: " + functionName, e);
           }
@@ -301,7 +288,7 @@ public class TransformFunctionFactory {
 
         List<TransformFunction> transformFunctionArguments = new ArrayList<>(numArguments);
         for (ExpressionContext argument : arguments) {
-          transformFunctionArguments.add(TransformFunctionFactory.get(queryContext, argument, dataSourceMap));
+          transformFunctionArguments.add(TransformFunctionFactory.get(argument, dataSourceMap, queryContext));
         }
         try {
           transformFunction.init(transformFunctionArguments, dataSourceMap);
@@ -320,6 +307,11 @@ public class TransformFunctionFactory {
       default:
         throw new IllegalStateException();
     }
+  }
+
+  @VisibleForTesting
+  public static TransformFunction get(ExpressionContext expression, Map<String, DataSource> dataSourceMap) {
+    return get(expression, dataSourceMap, null);
   }
 
   /**

@@ -180,6 +180,24 @@ public abstract class SegmentDirectory implements Closeable {
 
     public abstract boolean hasIndexFor(String column, ColumnIndexType type);
 
+    public boolean hasStarTreeIndex() {
+      return false;
+    }
+
+    /**
+     * The StarTree index is a multi-column index but modelled like those single-column indices kept in columns.psf and
+     * index_map files, so access to its index data can be abstracted with SegmentDirectory.Reader interface too. In the
+     * future, if new kinds of multi-column index e.g. materialized views is added, this interface can be generalized to
+     * access them too.
+     *
+     * @param starTreeId to look for a specific index instance. The StarTree index can contain multiple index instances,
+     *                   each one of them has a tree and a set of fwd indices referred to by the tree.
+     * @return SegmentDirectory.Reader object to access the index buffers inside the specific index instance.
+     */
+    public Reader getStarTreeIndexReader(int starTreeId) {
+      return null;
+    }
+
     public SegmentDirectory toSegmentDirectory() {
       return SegmentDirectory.this;
     }

@@ -228,13 +228,13 @@ public class FilterPlanNode implements PlanNode {
         ExpressionContext lhs = predicate.getLhs();
         if (lhs.getType() == ExpressionContext.Type.FUNCTION) {
           if (canApplyH3IndexForDistanceCheck(predicate, lhs.getFunction())) {
-            return new H3IndexFilterOperator(_indexSegment, predicate, numDocs);
+            return new H3IndexFilterOperator(_indexSegment, _queryContext, predicate, numDocs);
           } else if (canApplyH3IndexForInclusionCheck(predicate, lhs.getFunction())) {
-            return new H3InclusionIndexFilterOperator(_indexSegment, predicate, _queryContext, numDocs);
+            return new H3InclusionIndexFilterOperator(_indexSegment, _queryContext, predicate, numDocs);
           } else {
             // TODO: ExpressionFilterOperator does not support predicate types without PredicateEvaluator (IS_NULL,
             //       IS_NOT_NULL, TEXT_MATCH)
-            return new ExpressionFilterOperator(_indexSegment, predicate, numDocs);
+            return new ExpressionFilterOperator(_indexSegment, _queryContext, predicate, numDocs);
           }
         } else {
           String column = lhs.getIdentifier();
@@ -250,6 +250,9 @@ public class FilterPlanNode implements PlanNode {
               return new TextContainsFilterOperator(textIndexReader, (TextContainsPredicate) predicate, numDocs);
             case TEXT_MATCH:
               textIndexReader = dataSource.getTextIndex();
+              Preconditions
+                  .checkState(textIndexReader != null, "Cannot apply TEXT_MATCH on column: %s without text index",
+                      column);
               // We could check for real time and segment Lucene reader, but easier to check the other way round
               if (textIndexReader instanceof NativeTextIndexReader
                   || textIndexReader instanceof NativeMutableTextIndex) {
@@ -275,7 +278,8 @@ public class FilterPlanNode implements PlanNode {
                         dataSource.getDataSourceMetadata().getDataType());
               }
               _predicateEvaluators.add(Pair.of(predicate, predicateEvaluator));
-              return FilterOperatorUtils.getLeafFilterOperator(predicateEvaluator, dataSource, numDocs);
+              return FilterOperatorUtils.getLeafFilterOperator(predicateEvaluator, dataSource, numDocs,
+                  _queryContext.isNullHandlingEnabled());
             case JSON_MATCH:
               JsonIndexReader jsonIndex = dataSource.getJsonIndex();
               Preconditions.checkState(jsonIndex != null, "Cannot apply JSON_MATCH on column: %s without json index",
@@ -296,11 +300,11 @@ public class FilterPlanNode implements PlanNode {
                 return new MatchAllFilterOperator(numDocs);
               }
             default:
-              predicateEvaluator =
-                  PredicateEvaluatorProvider.getPredicateEvaluator(predicate, dataSource.getDictionary(),
-                      dataSource.getDataSourceMetadata().getDataType());
+              predicateEvaluator = PredicateEvaluatorProvider.getPredicateEvaluator(predicate, dataSource,
+                  _queryContext);
               _predicateEvaluators.add(Pair.of(predicate, predicateEvaluator));
-              return FilterOperatorUtils.getLeafFilterOperator(predicateEvaluator, dataSource, numDocs);
+              return FilterOperatorUtils.getLeafFilterOperator(predicateEvaluator, dataSource, numDocs,
+                  _queryContext.isNullHandlingEnabled());
           }
         }
       default:

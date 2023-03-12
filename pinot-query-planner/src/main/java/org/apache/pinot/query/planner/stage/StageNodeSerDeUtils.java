@@ -75,10 +75,16 @@ public final class StageNodeSerDeUtils {
         return new FilterNode(stageId);
       case "AggregateNode":
         return new AggregateNode(stageId);
+      case "SortNode":
+        return new SortNode(stageId);
       case "MailboxSendNode":
         return new MailboxSendNode(stageId);
       case "MailboxReceiveNode":
         return new MailboxReceiveNode(stageId);
+      case "ValueNode":
+        return new ValueNode(stageId);
+      case "WindowNode":
+        return new WindowNode(stageId);
       default:
         throw new IllegalArgumentException("Unknown node name: " + nodeName);
     }

@@ -24,6 +24,7 @@ import java.io.InputStream;
 import java.io.Serializable;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URLDecoder;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
@@ -36,6 +37,7 @@ import java.util.UUID;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.http.Header;
+import org.apache.http.NameValuePair;
 import org.apache.http.message.BasicHeader;
 import org.apache.pinot.common.auth.AuthProviderUtils;
 import org.apache.pinot.common.exception.HttpErrorStatusException;
@@ -44,8 +46,10 @@ import org.apache.pinot.common.utils.SimpleHttpResponse;
 import org.apache.pinot.common.utils.TarGzCompressionUtils;
 import org.apache.pinot.common.utils.http.HttpClient;
 import org.apache.pinot.segment.spi.V1Constants;
+import org.apache.pinot.segment.spi.creator.name.SegmentNameUtils;
 import org.apache.pinot.spi.auth.AuthProvider;
 import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.filesystem.LocalPinotFS;
 import org.apache.pinot.spi.filesystem.PinotFS;
 import org.apache.pinot.spi.filesystem.PinotFSFactory;
 import org.apache.pinot.spi.ingestion.batch.spec.Constants;
@@ -96,6 +100,49 @@ public class SegmentPushUtils implements Serializable {
   public static void pushSegments(SegmentGenerationJobSpec spec, PinotFS fileSystem, List<String> tarFilePaths)
       throws RetriableOperationException, AttemptsExceededException {
     String tableName = spec.getTableSpec().getTableName();
+    AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
+    List<Header> headers = AuthProviderUtils.toRequestHeaders(authProvider);
+    List<NameValuePair> parameters = FileUploadDownloadClient.makeTableParam(tableName);
+    pushSegments(spec, fileSystem, tarFilePaths, headers, parameters);
+  }
+
+  public static void sendSegmentUris(SegmentGenerationJobSpec spec, List<String> segmentUris)
+      throws RetriableOperationException, AttemptsExceededException {
+    String tableName = spec.getTableSpec().getTableName();
+    AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
+    List<Header> headers = AuthProviderUtils.toRequestHeaders(authProvider);
+    List<NameValuePair> parameters = FileUploadDownloadClient.makeTableParam(tableName);
+    sendSegmentUris(spec, segmentUris, headers, parameters);
+  }
+
+  /**
+   * This method takes a map of segment downloadURI to corresponding tar file path, and push those segments in
+   * metadata mode.
+   * The steps are:
+   * 1. Download segment from tar file path;
+   * 2. Untar segment metadata and creation meta files from the tar file to a segment metadata directory;
+   * 3. Tar this segment metadata directory into a tar file
+   * 4. Generate a POST request with segmentDownloadURI in header to push tar file to Pinot controller.
+   *
+   * @param spec is the segment generation job spec
+   * @param fileSystem is the PinotFs used to copy segment tar file
+   * @param segmentUriToTarPathMap contains the map of segment DownloadURI to segment tar file path
+   * @throws Exception
+   */
+  public static void sendSegmentUriAndMetadata(SegmentGenerationJobSpec spec, PinotFS fileSystem,
+      Map<String, String> segmentUriToTarPathMap)
+      throws Exception {
+    String tableName = spec.getTableSpec().getTableName();
+    AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
+    List<Header> headers = AuthProviderUtils.toRequestHeaders(authProvider);
+    List<NameValuePair> parameters = FileUploadDownloadClient.makeTableParam(tableName);
+    sendSegmentUriAndMetadata(spec, fileSystem, segmentUriToTarPathMap, headers, parameters);
+  }
+
+  public static void pushSegments(SegmentGenerationJobSpec spec, PinotFS fileSystem, List<String> tarFilePaths,
+      List<Header> headers, List<NameValuePair> parameters)
+      throws RetriableOperationException, AttemptsExceededException {
+    String tableName = spec.getTableSpec().getTableName();
     TableType tableType = tableName.endsWith("_" + TableType.REALTIME.name()) ? TableType.REALTIME : TableType.OFFLINE;
     boolean cleanUpOutputDir = spec.isCleanUpOutputDir();
     LOGGER.info("Start pushing segments: {}... to locations: {} for table {}",
@@ -107,7 +154,6 @@ public class SegmentPushUtils implements Serializable {
       String fileName = tarFile.getName();
       Preconditions.checkArgument(fileName.endsWith(Constants.TAR_GZ_FILE_EXT));
       String segmentName = fileName.substring(0, fileName.length() - Constants.TAR_GZ_FILE_EXT.length());
-      AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
       for (PinotClusterSpec pinotClusterSpec : spec.getPinotClusterSpecs()) {
         URI controllerURI;
         try {
@@ -128,8 +174,8 @@ public class SegmentPushUtils implements Serializable {
           try (InputStream inputStream = fileSystem.open(tarFileURI)) {
             SimpleHttpResponse response =
                 FILE_UPLOAD_DOWNLOAD_CLIENT.uploadSegment(FileUploadDownloadClient.getUploadSegmentURI(controllerURI),
-                    segmentName, inputStream, AuthProviderUtils.toRequestHeaders(authProvider),
-                    FileUploadDownloadClient.makeTableParam(tableName), tableName, tableType);
+                    segmentName, inputStream, headers,
+                    parameters, tableName, tableType);
             LOGGER.info("Response for pushing table {} segment {} to location {} - {}: {}", tableName, segmentName,
                 controllerURI, response.getStatusCode(), response.getResponse());
             return true;
@@ -156,7 +202,8 @@ public class SegmentPushUtils implements Serializable {
     }
   }
 
-  public static void sendSegmentUris(SegmentGenerationJobSpec spec, List<String> segmentUris)
+  public static void sendSegmentUris(SegmentGenerationJobSpec spec, List<String> segmentUris,
+      List<Header> headers, List<NameValuePair> parameters)
       throws RetriableOperationException, AttemptsExceededException {
     String tableName = spec.getTableSpec().getTableName();
     LOGGER.info("Start sending table {} segment URIs: {} to locations: {}", tableName,
@@ -165,7 +212,6 @@ public class SegmentPushUtils implements Serializable {
     for (String segmentUri : segmentUris) {
       URI segmentURI = URI.create(segmentUri);
       PinotFS outputDirFS = PinotFSFactory.create(segmentURI.getScheme());
-      AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
       for (PinotClusterSpec pinotClusterSpec : spec.getPinotClusterSpecs()) {
         URI controllerURI;
         try {
@@ -186,8 +232,7 @@ public class SegmentPushUtils implements Serializable {
           try {
             SimpleHttpResponse response = FILE_UPLOAD_DOWNLOAD_CLIENT
                 .sendSegmentUri(FileUploadDownloadClient.getUploadSegmentURI(controllerURI), segmentUri,
-                    AuthProviderUtils.toRequestHeaders(authProvider),
-                    FileUploadDownloadClient.makeTableParam(tableName), HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
+                    headers, parameters, HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
             LOGGER.info("Response for pushing table {} segment uri {} to location {} - {}: {}", tableName, segmentUri,
                 controllerURI, response.getStatusCode(), response.getResponse());
             return true;
@@ -229,7 +274,7 @@ public class SegmentPushUtils implements Serializable {
    * @throws Exception
    */
   public static void sendSegmentUriAndMetadata(SegmentGenerationJobSpec spec, PinotFS fileSystem,
-      Map<String, String> segmentUriToTarPathMap)
+      Map<String, String> segmentUriToTarPathMap, List<Header> headers, List<NameValuePair> parameters)
       throws Exception {
     String tableName = spec.getTableSpec().getTableName();
     LOGGER.info("Start pushing segment metadata: {} to locations: {} for table {}", segmentUriToTarPathMap,
@@ -237,10 +282,27 @@ public class SegmentPushUtils implements Serializable {
     for (String segmentUriPath : segmentUriToTarPathMap.keySet()) {
       String tarFilePath = segmentUriToTarPathMap.get(segmentUriPath);
       String fileName = new File(tarFilePath).getName();
-      Preconditions.checkArgument(fileName.endsWith(Constants.TAR_GZ_FILE_EXT));
-      String segmentName = fileName.substring(0, fileName.length() - Constants.TAR_GZ_FILE_EXT.length());
-      File segmentMetadataFile = generateSegmentMetadataFile(fileSystem, URI.create(tarFilePath));
-      AuthProvider authProvider = AuthProviderUtils.makeAuthProvider(spec.getAuthToken());
+      // segments stored in Pinot deep store do not have .tar.gz extension
+      String segmentName = fileName.endsWith(Constants.TAR_GZ_FILE_EXT)
+          ? fileName.substring(0, fileName.length() - Constants.TAR_GZ_FILE_EXT.length()) : fileName;
+      SegmentNameUtils.validatePartialOrFullSegmentName(segmentName);
+      File segmentMetadataFile;
+      // Check if there is a segment metadata tar gz file named `segmentName.metadata.tar.gz`, already in the remote
+      // directory. This is to avoid generating a new segment metadata tar gz file every time we push a segment,
+      // which requires downloading the entire segment tar gz file.
+
+      URI metadataTarGzFilePath = generateSegmentMetadataURI(tarFilePath, segmentName);
+      LOGGER.info("Checking if metadata tar gz file {} exists", metadataTarGzFilePath);
+      if (spec.getPushJobSpec().isPreferMetadataTarGz() && fileSystem.exists(metadataTarGzFilePath)) {
+        segmentMetadataFile = new File(FileUtils.getTempDirectory(),
+            "segmentMetadata-" + UUID.randomUUID() + TarGzCompressionUtils.TAR_GZ_FILE_EXTENSION);
+        if (segmentMetadataFile.exists()) {
+          FileUtils.forceDelete(segmentMetadataFile);
+        }
+        fileSystem.copyToLocalFile(metadataTarGzFilePath, segmentMetadataFile);
+      } else {
+        segmentMetadataFile = generateSegmentMetadataFile(fileSystem, URI.create(tarFilePath));
+      }
       try {
         for (PinotClusterSpec pinotClusterSpec : spec.getPinotClusterSpecs()) {
           URI controllerURI;
@@ -259,21 +321,19 @@ public class SegmentPushUtils implements Serializable {
             retryWaitMs = spec.getPushJobSpec().getPushRetryIntervalMillis();
           }
           RetryPolicies.exponentialBackoffRetryPolicy(attempts, retryWaitMs, 5).attempt(() -> {
+            List<Header> reqHttpHeaders = new ArrayList<>(headers);
             try {
-              List<Header> headers = new ArrayList<>();
-              headers.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.DOWNLOAD_URI, segmentUriPath));
-              headers.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.UPLOAD_TYPE,
+              reqHttpHeaders.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.DOWNLOAD_URI, segmentUriPath));
+              reqHttpHeaders.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.UPLOAD_TYPE,
                   FileUploadDownloadClient.FileUploadType.METADATA.toString()));
               if (spec.getPushJobSpec() != null) {
-                headers.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.COPY_SEGMENT_TO_DEEP_STORE,
+                reqHttpHeaders.add(new BasicHeader(FileUploadDownloadClient.CustomHeaders.COPY_SEGMENT_TO_DEEP_STORE,
                     String.valueOf(spec.getPushJobSpec().getCopyToDeepStoreForMetadataPush())));
               }
-              headers.addAll(AuthProviderUtils.toRequestHeaders(authProvider));
 
-              SimpleHttpResponse response = FILE_UPLOAD_DOWNLOAD_CLIENT
-                  .uploadSegmentMetadata(FileUploadDownloadClient.getUploadSegmentURI(controllerURI), segmentName,
-                      segmentMetadataFile, headers, FileUploadDownloadClient.makeTableParam(tableName),
-                      HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
+              SimpleHttpResponse response = FILE_UPLOAD_DOWNLOAD_CLIENT.uploadSegmentMetadata(
+                  FileUploadDownloadClient.getUploadSegmentURI(controllerURI), segmentName,
+                  segmentMetadataFile, reqHttpHeaders, parameters, HttpClient.DEFAULT_SOCKET_TIMEOUT_MS);
               LOGGER.info("Response for pushing table {} segment {} to location {} - {}: {}", tableName, segmentName,
                   controllerURI, response.getStatusCode(), response.getResponse());
               return true;
@@ -281,9 +341,8 @@ public class SegmentPushUtils implements Serializable {
               int statusCode = e.getStatusCode();
               if (statusCode >= 500) {
                 // Temporary exception
-                LOGGER
-                    .warn("Caught temporary exception while pushing table: {} segment: {} to {}, will retry", tableName,
-                        segmentName, controllerURI, e);
+                LOGGER.warn("Caught temporary exception while pushing table: {} segment: {} to {}, will retry",
+                    tableName, segmentName, controllerURI, e);
                 return false;
               } else {
                 // Permanent exception
@@ -316,6 +375,10 @@ public class SegmentPushUtils implements Serializable {
       }
 
       URI uri = URI.create(file);
+      if (uri.getPath().endsWith(Constants.METADATA_TAR_GZ_FILE_EXT)) {
+        // Skip segment metadata tar gz files
+        continue;
+      }
       if (uri.getPath().endsWith(Constants.TAR_GZ_FILE_EXT)) {
         URI updatedURI = SegmentPushUtils.generateSegmentTarURI(outputDirURI, uri, pushSpec.getSegmentUriPrefix(),
             pushSpec.getSegmentUriSuffix());
@@ -342,7 +405,13 @@ public class SegmentPushUtils implements Serializable {
         new File(FileUtils.getTempDirectory(), "segmentTar-" + uuid + TarGzCompressionUtils.TAR_GZ_FILE_EXTENSION);
     File segmentMetadataDir = new File(FileUtils.getTempDirectory(), "segmentMetadataDir-" + uuid);
     try {
-      fileSystem.copyToLocalFile(tarFileURI, tarFile);
+      if (fileSystem instanceof LocalPinotFS) {
+        // For local file system, we don't need to copy the tar file.
+        tarFile = new File(URLDecoder.decode(tarFileURI.getRawPath(), "UTF-8"));
+      } else {
+        // For other file systems, we need to download the file to local file system
+        fileSystem.copyToLocalFile(tarFileURI, tarFile);
+      }
       if (segmentMetadataDir.exists()) {
         FileUtils.forceDelete(segmentMetadataDir);
       }
@@ -367,8 +436,26 @@ public class SegmentPushUtils implements Serializable {
       TarGzCompressionUtils.createTarGzFile(segmentMetadataDir, segmentMetadataTarFile);
       return segmentMetadataTarFile;
     } finally {
-      FileUtils.deleteQuietly(tarFile);
+      if (!(fileSystem instanceof LocalPinotFS)) {
+        // For local file system, we don't need to delete the tar file.
+        FileUtils.deleteQuietly(tarFile);
+      }
       FileUtils.deleteQuietly(segmentMetadataDir);
     }
+  }
+
+  public static URI generateSegmentMetadataURI(String segmentTarPath, String segmentName)
+      throws URISyntaxException {
+    URI segmentTarURI = URI.create(segmentTarPath);
+    URI metadataTarGzFilePath = new URI(
+        segmentTarURI.getScheme(),
+        segmentTarURI.getUserInfo(),
+        segmentTarURI.getHost(),
+        segmentTarURI.getPort(),
+        new File(segmentTarURI.getPath()).getParentFile() + File.separator + segmentName
+            + Constants.METADATA_TAR_GZ_FILE_EXT,
+        segmentTarURI.getQuery(),
+        segmentTarURI.getFragment());
+    return metadataTarGzFilePath;
   }
 }

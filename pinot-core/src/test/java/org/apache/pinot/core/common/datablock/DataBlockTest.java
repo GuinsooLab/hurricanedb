@@ -20,22 +20,24 @@ package org.apache.pinot.core.common.datablock;
 
 import com.google.common.collect.ImmutableList;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.pinot.common.datablock.ColumnarDataBlock;
+import org.apache.pinot.common.datablock.DataBlock;
+import org.apache.pinot.common.datablock.DataBlockUtils;
+import org.apache.pinot.common.datablock.RowDataBlock;
 import org.apache.pinot.common.exception.QueryException;
 import org.apache.pinot.common.response.ProcessingException;
 import org.apache.pinot.common.utils.DataSchema;
-import org.apache.pinot.common.utils.DataTable;
-import org.apache.pinot.core.common.datatable.DataTableFactory;
-import org.apache.pinot.core.query.selection.SelectionOperatorUtils;
 import org.testng.Assert;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 
 public class DataBlockTest {
   private static final List<DataSchema.ColumnDataType> EXCLUDE_DATA_TYPES = ImmutableList.of(
-      DataSchema.ColumnDataType.OBJECT, DataSchema.ColumnDataType.BYTES_ARRAY);
+      DataSchema.ColumnDataType.OBJECT, DataSchema.ColumnDataType.JSON, DataSchema.ColumnDataType.BYTES,
+      DataSchema.ColumnDataType.BYTES_ARRAY);
   private static final int TEST_ROW_COUNT = 5;
 
   @Test
@@ -46,28 +48,21 @@ public class DataBlockTest {
         QueryException.getException(QueryException.QUERY_EXECUTION_ERROR, originalException);
     String expected = processingException.getMessage();
 
-    BaseDataBlock dataBlock = DataBlockUtils.getErrorDataBlock(originalException);
+    DataBlock dataBlock = DataBlockUtils.getErrorDataBlock(originalException);
     dataBlock.addException(processingException);
-    Assert.assertEquals(dataBlock.getDataSchema().getColumnNames().length, 0);
-    Assert.assertEquals(dataBlock.getDataSchema().getColumnDataTypes().length, 0);
     Assert.assertEquals(dataBlock.getNumberOfRows(), 0);
 
     // Assert processing exception and original exception both matches.
     String actual = dataBlock.getExceptions().get(QueryException.QUERY_EXECUTION_ERROR.getErrorCode());
     Assert.assertEquals(actual, expected);
-    Assert.assertEquals(dataBlock.getExceptions().get(QueryException.UNKNOWN_ERROR_CODE),
-        originalException.getMessage());
+    Assert.assertTrue(dataBlock.getExceptions().get(QueryException.UNKNOWN_ERROR_CODE)
+        .contains(originalException.getMessage()));
   }
 
-  /**
-   * This test is only here to ensure that {@link org.apache.pinot.core.query.executor.ServerQueryExecutorV1Impl}
-   * producing data table can actually be wrapped and sent via mailbox in the {@link RowDataBlock} format.
-   *
-   * @throws Exception
-   */
-  @Test
-  public void testRowDataBlockCompatibleWithDataTableV4()
+  @Test(dataProvider = "testTypeNullPercentile")
+  public void testAllDataTypes(int nullPercentile)
       throws Exception {
+
     DataSchema.ColumnDataType[] allDataTypes = DataSchema.ColumnDataType.values();
     List<DataSchema.ColumnDataType> columnDataTypes = new ArrayList<DataSchema.ColumnDataType>();
     List<String> columnNames = new ArrayList<String>();
@@ -78,39 +73,12 @@ public class DataBlockTest {
       }
     }
 
-    DataSchema dataSchema = new DataSchema(columnNames.toArray(new String[0]),
-        columnDataTypes.toArray(new DataSchema.ColumnDataType[0]));
-    List<Object[]> rows = DataBlockTestUtils.getRandomRows(dataSchema, TEST_ROW_COUNT);
-    DataTableFactory.setDataTableVersion(DataTableFactory.VERSION_4);
-    DataTable dataTableImpl = SelectionOperatorUtils.getDataTableFromRows(rows, dataSchema);
-    DataTable dataBlockFromDataTable = DataBlockUtils.getDataBlock(ByteBuffer.wrap(dataTableImpl.toBytes()));
-
-    for (int rowId = 0; rowId < TEST_ROW_COUNT; rowId++) {
-      Object[] rowFromDataTable = SelectionOperatorUtils.extractRowFromDataTable(dataTableImpl, rowId);
-      Object[] rowFromBlock = SelectionOperatorUtils.extractRowFromDataTable(dataBlockFromDataTable, rowId);
-      for (int colId = 0; colId < dataSchema.getColumnNames().length; colId++) {
-        Assert.assertEquals(rowFromBlock[colId], rowFromDataTable[colId], "Error comparing Row/Column Block "
-            + " at (" + rowId + "," + colId + ") of Type: " + dataSchema.getColumnDataType(colId) + "! "
-            + " from DataBlock: [" + rowFromBlock[rowId] + "], from DataTable: [" + rowFromDataTable[colId] + "]");
-      }
-    }
-  }
-
-  @Test
-  public void testAllDataTypes()
-      throws Exception {
-    DataSchema.ColumnDataType[] columnDataTypes = DataSchema.ColumnDataType.values();
-    int numColumns = columnDataTypes.length;
-    String[] columnNames = new String[numColumns];
-    for (int i = 0; i < numColumns; i++) {
-      columnNames[i] = columnDataTypes[i].name();
-    }
-
-    DataSchema dataSchema = new DataSchema(columnNames, columnDataTypes);
-    List<Object[]> rows = DataBlockTestUtils.getRandomRows(dataSchema, TEST_ROW_COUNT);
+    DataSchema dataSchema = new DataSchema(columnNames.toArray(new String[]{}),
+        columnDataTypes.toArray(new DataSchema.ColumnDataType[]{}));
+    List<Object[]> rows = DataBlockTestUtils.getRandomRows(dataSchema, TEST_ROW_COUNT, nullPercentile);
     List<Object[]> columnars = DataBlockTestUtils.convertColumnar(dataSchema, rows);
-    RowDataBlock rowBlock = DataBlockBuilder.buildFromRows(rows, null, dataSchema);
-    ColumnarDataBlock columnarBlock = DataBlockBuilder.buildFromColumns(columnars, null, dataSchema);
+    RowDataBlock rowBlock = DataBlockBuilder.buildFromRows(rows, dataSchema);
+    ColumnarDataBlock columnarBlock = DataBlockBuilder.buildFromColumns(columnars, dataSchema);
 
     for (int colId = 0; colId < dataSchema.getColumnNames().length; colId++) {
       DataSchema.ColumnDataType columnDataType = dataSchema.getColumnDataType(colId);
@@ -121,5 +89,10 @@ public class DataBlockTest {
             + " of Type: " + columnDataType + "! rowValue: [" + rowVal + "], columnarValue: [" + colVal + "]");
       }
     }
+  }
+
+  @DataProvider(name = "testTypeNullPercentile")
+  public Object[][] provideTestTypeNullPercentile() {
+    return new Object[][]{new Object[]{0}, new Object[]{10}, new Object[]{100}};
   }
 }

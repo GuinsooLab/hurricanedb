@@ -22,12 +22,13 @@ import com.google.common.base.Preconditions;
 import java.util.Collections;
 import java.util.List;
 import org.apache.pinot.core.common.BlockDocIdIterator;
+import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.blocks.DocIdSetBlock;
-import org.apache.pinot.core.operator.docidsets.FilterBlockDocIdSet;
 import org.apache.pinot.core.operator.filter.BaseFilterOperator;
 import org.apache.pinot.core.plan.DocIdSetPlanNode;
 import org.apache.pinot.segment.spi.Constants;
+import org.apache.pinot.spi.trace.Tracing;
 
 
 /**
@@ -44,7 +45,7 @@ public class DocIdSetOperator extends BaseOperator<DocIdSetBlock> {
   private final BaseFilterOperator _filterOperator;
   private final int _maxSizeOfDocIdSet;
 
-  private FilterBlockDocIdSet _filterBlockDocIdSet;
+  private BlockDocIdSet _blockDocIdSet;
   private BlockDocIdIterator _blockDocIdIterator;
   private int _currentDocId = 0;
 
@@ -61,10 +62,12 @@ public class DocIdSetOperator extends BaseOperator<DocIdSetBlock> {
     }
 
     // Initialize filter block document Id set
-    if (_filterBlockDocIdSet == null) {
-      _filterBlockDocIdSet = _filterOperator.nextBlock().getBlockDocIdSet();
-      _blockDocIdIterator = _filterBlockDocIdSet.iterator();
+    if (_blockDocIdSet == null) {
+      _blockDocIdSet = _filterOperator.nextBlock().getBlockDocIdSet();
+      _blockDocIdIterator = _blockDocIdSet.iterator();
     }
+
+    Tracing.ThreadAccountantOps.sample();
 
     int pos = 0;
     int[] docIds = THREAD_LOCAL_DOC_IDS.get();
@@ -82,7 +85,6 @@ public class DocIdSetOperator extends BaseOperator<DocIdSetBlock> {
     }
   }
 
-
   @Override
   public String toExplainString() {
     return EXPLAIN_NAME;
@@ -95,8 +97,7 @@ public class DocIdSetOperator extends BaseOperator<DocIdSetBlock> {
 
   @Override
   public ExecutionStatistics getExecutionStatistics() {
-    long numEntriesScannedInFilter =
-        _filterBlockDocIdSet != null ? _filterBlockDocIdSet.getNumEntriesScannedInFilter() : 0;
+    long numEntriesScannedInFilter = _blockDocIdSet != null ? _blockDocIdSet.getNumEntriesScannedInFilter() : 0;
     return new ExecutionStatistics(0, numEntriesScannedInFilter, 0, 0);
   }
 }

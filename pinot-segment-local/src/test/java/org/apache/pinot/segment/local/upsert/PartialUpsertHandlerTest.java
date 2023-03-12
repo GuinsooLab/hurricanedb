@@ -19,6 +19,7 @@
 package org.apache.pinot.segment.local.upsert;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.pinot.spi.config.table.UpsertConfig;
@@ -43,7 +44,8 @@ public class PartialUpsertHandlerTest {
     Map<String, UpsertConfig.Strategy> partialUpsertStrategies = new HashMap<>();
     partialUpsertStrategies.put("field1", UpsertConfig.Strategy.INCREMENT);
     PartialUpsertHandler handler =
-        new PartialUpsertHandler(schema, partialUpsertStrategies, UpsertConfig.Strategy.OVERWRITE, "hoursSinceEpoch");
+        new PartialUpsertHandler(schema, partialUpsertStrategies, UpsertConfig.Strategy.OVERWRITE,
+            Collections.singletonList("hoursSinceEpoch"));
 
     // both records are null.
     GenericRow previousRecord = new GenericRow();
@@ -66,7 +68,7 @@ public class PartialUpsertHandlerTest {
 
     // newRecord is default null value, while previousRecord is not.
     // field1 should not be incremented since the newRecord is null.
-    // special case: field2 should be overrided by null value because we didn't enabled default partial upsert strategy.
+    // special case: field2 should be merged based on default partial upsert strategy.
     previousRecord.clear();
     incomingRecord.clear();
     previousRecord.putValue("field1", 1);
@@ -76,7 +78,8 @@ public class PartialUpsertHandlerTest {
     newRecord = handler.merge(previousRecord, incomingRecord);
     assertFalse(newRecord.isNullValue("field1"));
     assertEquals(newRecord.getValue("field1"), 1);
-    assertTrue(newRecord.isNullValue("field2"));
+    assertFalse(newRecord.isNullValue("field2"));
+    assertEquals(newRecord.getValue("field2"), 2);
 
     // neither of records is null.
     previousRecord.clear();
@@ -97,7 +100,8 @@ public class PartialUpsertHandlerTest {
     Map<String, UpsertConfig.Strategy> partialUpsertStrategies = new HashMap<>();
     partialUpsertStrategies.put("field1", UpsertConfig.Strategy.INCREMENT);
     PartialUpsertHandler handler =
-        new PartialUpsertHandler(schema, partialUpsertStrategies, UpsertConfig.Strategy.OVERWRITE, "hoursSinceEpoch");
+        new PartialUpsertHandler(schema, partialUpsertStrategies, UpsertConfig.Strategy.OVERWRITE,
+            Collections.singletonList("hoursSinceEpoch"));
 
     // previousRecord is null default value, while newRecord is not.
     GenericRow previousRecord = new GenericRow();

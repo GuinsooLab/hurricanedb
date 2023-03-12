@@ -21,7 +21,6 @@ package org.apache.pinot.query.planner.partitioning;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.apache.pinot.query.planner.serde.ProtoProperties;
 
 
@@ -29,6 +28,7 @@ import org.apache.pinot.query.planner.serde.ProtoProperties;
  * The {@code FieldSelectionKeySelector} simply extract a column value out from a row array {@link Object[]}.
  */
 public class FieldSelectionKeySelector implements KeySelector<Object[], Object[]> {
+  private static final String HASH_ALGORITHM = "absHashCode";
 
   @ProtoProperties
   private List<Integer> _columnIndices;
@@ -67,10 +67,33 @@ public class FieldSelectionKeySelector implements KeySelector<Object[], Object[]
 
   @Override
   public int computeHash(Object[] input) {
-    HashCodeBuilder hashCodeBuilder = new HashCodeBuilder();
+    // use a hashing algorithm that is agnostic to the ordering of the columns.
+    // For example, computeHash(input) will be identical for both of the following
+    // values of _columnIndices:
+    // - [1, 2, 4]
+    // - [4, 1, 2]
+    // this is necessary because calcite always sorts _columnIndices for a hash
+    // broadcast, which may reorder the columns differently for different sides
+    // of a join
+    //
+    // the result of hashcode sums will follow the Irwin-Hall distribution, which
+    // is notably not a normal distribution although likely acceptable in the case
+    // when there are either many inputs or not many partitions
+    // also see: https://en.wikipedia.org/wiki/Irwin–Hall_distribution
+    // also see: https://github.com/apache/pinot/issues/9998
+    //
+    // TODO: consider better hashing algorithms than hashCode sum, such as XOR'ing
+    int hashCode = 0;
     for (int columnIndex : _columnIndices) {
-      hashCodeBuilder.append(input[columnIndex]);
+      hashCode += input[columnIndex].hashCode();
     }
-    return Math.abs(hashCodeBuilder.toHashCode());
+
+    // return a positive number because this is used directly to modulo-index
+    return Math.abs(hashCode);
+  }
+
+  @Override
+  public String hashAlgorithm() {
+    return HASH_ALGORITHM;
   }
 }

@@ -28,13 +28,13 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.pinot.segment.local.function.FunctionEvaluator;
 import org.apache.pinot.segment.local.function.FunctionEvaluatorFactory;
-import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
-import org.apache.pinot.spi.config.table.TimestampIndexGranularity;
 import org.apache.pinot.spi.config.table.ingestion.TransformConfig;
 import org.apache.pinot.spi.data.FieldSpec;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -43,19 +43,21 @@ import org.apache.pinot.spi.data.readers.GenericRow;
  * regular column for other record transformers.
  */
 public class ExpressionTransformer implements RecordTransformer {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ExpressionTransformer.class);
 
   @VisibleForTesting
   final LinkedHashMap<String, FunctionEvaluator> _expressionEvaluators = new LinkedHashMap<>();
+  private final boolean _continueOnError;
 
   public ExpressionTransformer(TableConfig tableConfig, Schema schema) {
     Map<String, FunctionEvaluator> expressionEvaluators = new HashMap<>();
+    _continueOnError = tableConfig.getIngestionConfig() != null && tableConfig.getIngestionConfig().isContinueOnError();
     if (tableConfig.getIngestionConfig() != null && tableConfig.getIngestionConfig().getTransformConfigs() != null) {
       for (TransformConfig transformConfig : tableConfig.getIngestionConfig().getTransformConfigs()) {
         FunctionEvaluator previous = expressionEvaluators.put(transformConfig.getColumnName(),
             FunctionEvaluatorFactory.getExpressionEvaluator(transformConfig.getTransformFunction()));
-        Preconditions
-            .checkState(previous == null, "Cannot set more than one ingestion transform function on column: %s.",
-                transformConfig.getColumnName());
+        Preconditions.checkState(previous == null,
+            "Cannot set more than one ingestion transform function on column: %s.", transformConfig.getColumnName());
       }
     }
     for (FieldSpec fieldSpec : schema.getAllFieldSpecs()) {
@@ -64,19 +66,6 @@ public class ExpressionTransformer implements RecordTransformer {
         FunctionEvaluator functionEvaluator = FunctionEvaluatorFactory.getExpressionEvaluator(fieldSpec);
         if (functionEvaluator != null) {
           expressionEvaluators.put(fieldName, functionEvaluator);
-        }
-      }
-    }
-    // For fields with Timestamp indexes, also generate the corresponding values during record transformation.
-    if (tableConfig.getFieldConfigList() != null) {
-      for (FieldConfig fieldConfig : tableConfig.getFieldConfigList()) {
-        if (fieldConfig.getIndexTypes().contains(FieldConfig.IndexType.TIMESTAMP)) {
-          for (TimestampIndexGranularity granularity : fieldConfig.getTimestampConfig().getGranularities()) {
-            expressionEvaluators.put(
-                TimestampIndexGranularity.getColumnNameWithGranularity(fieldConfig.getName(), granularity),
-                FunctionEvaluatorFactory.getExpressionEvaluator(
-                    TimestampIndexGranularity.getTransformExpression(fieldConfig.getName(), granularity)));
-          }
         }
       }
     }
@@ -112,9 +101,14 @@ public class ExpressionTransformer implements RecordTransformer {
       _expressionEvaluators.put(column, functionEvaluator);
       discoveredNames.remove(column);
     } else {
-      throw new IllegalStateException("Expression cycle found for column '" + column + "' in Ingestion Transform "
-          + "Function definitions.");
+      throw new IllegalStateException(
+          "Expression cycle found for column '" + column + "' in Ingestion Transform " + "Function definitions.");
     }
+  }
+
+  @Override
+  public boolean isNoOp() {
+    return _expressionEvaluators.isEmpty();
   }
 
   @Override
@@ -125,8 +119,16 @@ public class ExpressionTransformer implements RecordTransformer {
       // Skip transformation if column value already exist.
       // NOTE: column value might already exist for OFFLINE data
       if (record.getValue(column) == null) {
-        Object result = transformFunctionEvaluator.evaluate(record);
-        record.putValue(column, result);
+        try {
+          record.putValue(column, transformFunctionEvaluator.evaluate(record));
+        } catch (Exception e) {
+          if (!_continueOnError) {
+            throw new RuntimeException("Caught exception while evaluation transform function for column: " + column, e);
+          } else {
+            LOGGER.debug("Caught exception while evaluation transform function for column: {}", column, e);
+            record.putValue(GenericRow.INCOMPLETE_RECORD_KEY, true);
+          }
+        }
       }
     }
     return record;

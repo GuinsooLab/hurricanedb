@@ -20,6 +20,7 @@ package org.apache.pinot.sql.parsers;
 
 import java.util.Map;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.pinot.common.utils.config.QueryOptionsUtils;
 
 
 public class SqlNodeAndOptions {
@@ -27,6 +28,8 @@ public class SqlNodeAndOptions {
   private final PinotSqlType _sqlType;
   // TODO: support option literals other than STRING
   private final Map<String, String> _options;
+
+  private long _parseTimeNs;
 
   public SqlNodeAndOptions(SqlNode sqlNode, PinotSqlType sqlType, Map<String, String> options) {
     _sqlNode = sqlNode;
@@ -38,15 +41,25 @@ public class SqlNodeAndOptions {
     return _sqlNode;
   }
 
-  public Map<String, String> getOptions() {
-    return _options;
-  }
-
   public PinotSqlType getSqlType() {
     return _sqlType;
   }
 
+  public Map<String, String> getOptions() {
+    return _options;
+  }
+
+  public long getParseTimeNs() {
+    return _parseTimeNs;
+  }
+
+  public void setParseTimeNs(long parseTimeNs) {
+    _parseTimeNs = parseTimeNs;
+  }
+
   public void setExtraOptions(Map<String, String> extractOptionsMap) {
-    _options.putAll(extractOptionsMap);
+    for (Map.Entry<String, String> e : QueryOptionsUtils.resolveCaseInsensitiveOptions(extractOptionsMap).entrySet()) {
+      _options.putIfAbsent(e.getKey(), e.getValue());
+    }
   }
 }

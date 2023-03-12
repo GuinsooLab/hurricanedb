@@ -60,6 +60,7 @@ import org.apache.pinot.spi.config.table.BloomFilterConfig;
 import org.apache.pinot.spi.config.table.FSTType;
 import org.apache.pinot.spi.config.table.FieldConfig;
 import org.apache.pinot.spi.config.table.IndexingConfig;
+import org.apache.pinot.spi.config.table.JsonIndexConfig;
 import org.apache.pinot.spi.config.table.SegmentZKPropsConfig;
 import org.apache.pinot.spi.data.DateTimeFieldSpec;
 import org.apache.pinot.spi.data.DateTimeFormatSpec;
@@ -68,6 +69,7 @@ import org.apache.pinot.spi.data.FieldSpec.DataType;
 import org.apache.pinot.spi.data.FieldSpec.FieldType;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.data.readers.GenericRow;
+import org.apache.pinot.spi.utils.BytesUtils;
 import org.apache.pinot.spi.utils.TimeUtils;
 import org.joda.time.DateTimeZone;
 import org.joda.time.Interval;
@@ -167,11 +169,17 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       fstIndexColumns.add(columnName);
     }
 
-    Set<String> jsonIndexColumns = new HashSet<>();
-    for (String columnName : _config.getJsonIndexCreationColumns()) {
+    Map<String, JsonIndexConfig> jsonIndexConfigs = _config.getJsonIndexConfigs();
+    for (String columnName : jsonIndexConfigs.keySet()) {
       Preconditions.checkState(schema.hasColumn(columnName),
-          "Cannot create text index for column: %s because it is not in schema", columnName);
-      jsonIndexColumns.add(columnName);
+          "Cannot create json index for column: %s because it is not in schema", columnName);
+    }
+
+    Set<String> forwardIndexDisabledColumns = new HashSet<>();
+    for (String columnName : _config.getForwardIndexDisabledColumns()) {
+      Preconditions.checkState(schema.hasColumn(columnName), String.format("Invalid config. Can't disable "
+          + "forward index creation for a column: %s that does not exist in schema", columnName));
+      forwardIndexDisabledColumns.add(columnName);
     }
 
     Map<String, H3IndexConfig> h3IndexConfigs = _config.getH3IndexConfigs();
@@ -196,6 +204,8 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       Preconditions.checkState(dictEnabledColumn || !invertedIndexColumns.contains(columnName),
           "Cannot create inverted index for raw index column: %s", columnName);
 
+      boolean forwardIndexDisabled = forwardIndexDisabledColumns.contains(columnName);
+
       IndexCreationContext.Common context = IndexCreationContext.builder()
           .withIndexDir(_indexDir)
           .withCardinality(columnIndexCreationInfo.getDistinctValueCount())
@@ -208,12 +218,15 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
           .withColumnIndexCreationInfo(columnIndexCreationInfo)
           .sorted(columnIndexCreationInfo.isSorted())
           .onHeap(segmentCreationSpec.isOnHeap())
+          .withForwardIndexDisabled(forwardIndexDisabled)
           .build();
       // Initialize forward index creator
       ChunkCompressionType chunkCompressionType =
           dictEnabledColumn ? null : getColumnCompressionType(segmentCreationSpec, fieldSpec);
-      _forwardIndexCreatorMap.put(columnName, _indexCreatorProvider.newForwardIndexCreator(
-          context.forForwardIndex(chunkCompressionType, segmentCreationSpec.getColumnProperties())));
+      // Sorted columns treat the 'forwardIndexDisabled' flag as a no-op
+      _forwardIndexCreatorMap.put(columnName, (forwardIndexDisabled && !columnIndexCreationInfo.isSorted())
+          ? null : _indexCreatorProvider.newForwardIndexCreator(
+              context.forForwardIndex(chunkCompressionType, segmentCreationSpec.getColumnProperties())));
 
       // Initialize inverted index creator; skip creating inverted index if sorted
       if (invertedIndexColumns.contains(columnName) && !columnIndexCreationInfo.isSorted()) {
@@ -269,7 +282,9 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
           }
         }
         _textIndexCreatorMap.put(columnName,
-            _indexCreatorProvider.newTextIndexCreator(context.forTextIndex(fstType, true)));
+            _indexCreatorProvider.newTextIndexCreator(context.forTextIndex(fstType, true,
+                TextIndexUtils.extractStopWordsInclude(columnName, _columnProperties),
+                TextIndexUtils.extractStopWordsExclude(columnName, _columnProperties))));
       }
 
       if (fstIndexColumns.contains(columnName)) {
@@ -278,8 +293,10 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
                 (String[]) columnIndexCreationInfo.getSortedUniqueElementsArray())));
       }
 
-      if (jsonIndexColumns.contains(columnName)) {
-        _jsonIndexCreatorMap.put(columnName, _indexCreatorProvider.newJsonIndexCreator(context.forJsonIndex()));
+      JsonIndexConfig jsonIndexConfig = jsonIndexConfigs.get(columnName);
+      if (jsonIndexConfig != null) {
+        _jsonIndexCreatorMap.put(columnName,
+            _indexCreatorProvider.newJsonIndexCreator(context.forJsonIndex(jsonIndexConfig)));
       }
 
       H3IndexConfig h3IndexConfig = h3IndexConfigs.get(columnName);
@@ -319,25 +336,45 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       return false;
     }
 
-    // Do not create dictionary if index size with dictionary is going to be larger than index size without dictionary
-    // This is done to reduce the cost of dictionary for high cardinality columns
-    // Off by default and needs optimizeDictionaryEnabled to be set to true
-    if (config.isOptimizeDictionaryForMetrics() && spec.getFieldType() == FieldType.METRIC && spec.isSingleValueField()
-        && spec.getDataType().isFixedWidth()) {
-      long dictionarySize = info.getDistinctValueCount() * spec.getDataType().size();
-      long forwardIndexSize =
-          ((long) info.getTotalNumberOfEntries() * PinotDataBitSet.getNumBitsPerValue(info.getDistinctValueCount() - 1)
-              + Byte.SIZE - 1) / Byte.SIZE;
+    if (config.isOptimizeDictionary()) {
 
-      double indexWithDictSize = dictionarySize + forwardIndexSize;
-      double indexWithoutDictSize = info.getTotalNumberOfEntries() * spec.getDataType().size();
-
-      double indexSizeRatio = indexWithoutDictSize / indexWithDictSize;
-      if (indexSizeRatio <= config.getNoDictionarySizeRatioThreshold()) {
+      // Do not create dictionaries for json or text index columns as they are high-cardinality values almost always
+      if ((config.getJsonIndexConfigs().containsKey(column)
+          || config.getTextIndexCreationColumns().contains(column))) {
         return false;
+      }
+
+      // Do not create dictionary if index size with dictionary is going to be larger than index size without dictionary
+      // This is done to reduce the cost of dictionary for high cardinality columns
+      // Off by default and needs optimizeDictionary to be set to true
+      if (spec.isSingleValueField() && spec.getDataType().isFixedWidth()) {
+        return shouldCreateDictionaryWithinThreshold(info, config, spec);
       }
     }
 
+    if (config.isOptimizeDictionaryForMetrics() && !config.isOptimizeDictionary()) {
+      if (spec.isSingleValueField() && spec.getDataType().isFixedWidth() && spec.getFieldType() == FieldType.METRIC) {
+        return shouldCreateDictionaryWithinThreshold(info, config, spec);
+      }
+    }
+
+    return info.isCreateDictionary();
+  }
+
+  private boolean shouldCreateDictionaryWithinThreshold(ColumnIndexCreationInfo info,
+      SegmentGeneratorConfig config, FieldSpec spec) {
+    long dictionarySize = info.getDistinctValueCount() * spec.getDataType().size();
+    long forwardIndexSize =
+        ((long) info.getTotalNumberOfEntries()
+            * PinotDataBitSet.getNumBitsPerValue(info.getDistinctValueCount() - 1) + Byte.SIZE - 1) / Byte.SIZE;
+
+    double indexWithDictSize = dictionarySize + forwardIndexSize;
+    double indexWithoutDictSize = info.getTotalNumberOfEntries() * spec.getDataType().size();
+
+    double indexSizeRatio = indexWithoutDictSize / indexWithDictSize;
+    if (indexSizeRatio <= config.getNoDictionarySizeRatioThreshold()) {
+      return false;
+    }
     return info.isCreateDictionary();
   }
 
@@ -357,13 +394,17 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       FieldSpec fieldSpec) {
     ChunkCompressionType compressionType = segmentCreationSpec.getRawIndexCompressionType().get(fieldSpec.getName());
     if (compressionType == null) {
-      if (fieldSpec.getFieldType() == FieldSpec.FieldType.METRIC) {
-        return ChunkCompressionType.PASS_THROUGH;
-      } else {
-        return ChunkCompressionType.LZ4;
-      }
+      compressionType = getDefaultCompressionType(fieldSpec.getFieldType());
+    }
+
+    return compressionType;
+  }
+
+  public static ChunkCompressionType getDefaultCompressionType(FieldType fieldType) {
+    if (fieldType == FieldSpec.FieldType.METRIC) {
+      return ChunkCompressionType.PASS_THROUGH;
     } else {
-      return compressionType;
+      return ChunkCompressionType.LZ4;
     }
   }
 
@@ -388,11 +429,21 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       BloomFilterCreator bloomFilterCreator = _bloomFilterCreatorMap.get(columnName);
       if (bloomFilterCreator != null) {
         if (fieldSpec.isSingleValueField()) {
-          bloomFilterCreator.add(columnValueToIndex.toString());
+          if (fieldSpec.getDataType() == DataType.BYTES) {
+            bloomFilterCreator.add(BytesUtils.toHexString((byte[]) columnValueToIndex));
+          } else {
+            bloomFilterCreator.add(columnValueToIndex.toString());
+          }
         } else {
           Object[] values = (Object[]) columnValueToIndex;
-          for (Object value : values) {
-            bloomFilterCreator.add(value.toString());
+          if (fieldSpec.getDataType() == DataType.BYTES) {
+            for (Object value : values) {
+              bloomFilterCreator.add(BytesUtils.toHexString((byte[]) value));
+            }
+          } else {
+            for (Object value : values) {
+              bloomFilterCreator.add(value.toString());
+            }
           }
         }
       }
@@ -499,7 +550,9 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
           // get dictID from dictionary
           int dictId = dictionaryCreator.indexOfSV(columnValueToIndex);
           // store the docID -> dictID mapping in forward index
-          forwardIndexCreator.putDictId(dictId);
+          if (forwardIndexCreator != null) {
+            forwardIndexCreator.putDictId(dictId);
+          }
           DictionaryBasedInvertedIndexCreator invertedIndexCreator = _invertedIndexCreatorMap.get(columnName);
           if (invertedIndexCreator != null) {
             // if inverted index enabled during segment creation,
@@ -517,44 +570,48 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
               columnValueToIndex = FieldConfig.TEXT_INDEX_DEFAULT_RAW_VALUE;
             }
           }
-          switch (forwardIndexCreator.getValueType()) {
-            case INT:
-              forwardIndexCreator.putInt((int) columnValueToIndex);
-              break;
-            case LONG:
-              forwardIndexCreator.putLong((long) columnValueToIndex);
-              break;
-            case FLOAT:
-              forwardIndexCreator.putFloat((float) columnValueToIndex);
-              break;
-            case DOUBLE:
-              forwardIndexCreator.putDouble((double) columnValueToIndex);
-              break;
-            case BIG_DECIMAL:
-              forwardIndexCreator.putBigDecimal((BigDecimal) columnValueToIndex);
-              break;
-            case STRING:
-              forwardIndexCreator.putString((String) columnValueToIndex);
-              break;
-            case BYTES:
-              forwardIndexCreator.putBytes((byte[]) columnValueToIndex);
-              break;
-            case JSON:
-              if (columnValueToIndex instanceof String) {
+          if (forwardIndexCreator != null) {
+            switch (forwardIndexCreator.getValueType()) {
+              case INT:
+                forwardIndexCreator.putInt((int) columnValueToIndex);
+                break;
+              case LONG:
+                forwardIndexCreator.putLong((long) columnValueToIndex);
+                break;
+              case FLOAT:
+                forwardIndexCreator.putFloat((float) columnValueToIndex);
+                break;
+              case DOUBLE:
+                forwardIndexCreator.putDouble((double) columnValueToIndex);
+                break;
+              case BIG_DECIMAL:
+                forwardIndexCreator.putBigDecimal((BigDecimal) columnValueToIndex);
+                break;
+              case STRING:
                 forwardIndexCreator.putString((String) columnValueToIndex);
-              } else if (columnValueToIndex instanceof byte[]) {
+                break;
+              case BYTES:
                 forwardIndexCreator.putBytes((byte[]) columnValueToIndex);
-              }
-              break;
-            default:
-              throw new IllegalStateException();
+                break;
+              case JSON:
+                if (columnValueToIndex instanceof String) {
+                  forwardIndexCreator.putString((String) columnValueToIndex);
+                } else if (columnValueToIndex instanceof byte[]) {
+                  forwardIndexCreator.putBytes((byte[]) columnValueToIndex);
+                }
+                break;
+              default:
+                throw new IllegalStateException();
+            }
           }
         }
       } else {
         if (dictionaryCreator != null) {
           //dictionary encoded
           int[] dictIds = dictionaryCreator.indexOfMV(columnValueToIndex);
-          forwardIndexCreator.putDictIdMV(dictIds);
+          if (forwardIndexCreator != null) {
+            forwardIndexCreator.putDictIdMV(dictIds);
+          }
           DictionaryBasedInvertedIndexCreator invertedIndexCreator = _invertedIndexCreatorMap.get(columnName);
           if (invertedIndexCreator != null) {
             invertedIndexCreator.add(dictIds, dictIds.length);
@@ -562,74 +619,76 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
         } else {
           // for text index on raw columns, check the config to determine if actual raw value should
           // be stored or not
-          if (textIndexCreator != null && !shouldStoreRawValueForTextIndex(columnName)) {
-            Object value = _columnProperties.get(columnName).get(FieldConfig.TEXT_INDEX_RAW_VALUE);
-            if (value == null) {
-              value = FieldConfig.TEXT_INDEX_DEFAULT_RAW_VALUE;
-            }
-            if (forwardIndexCreator.getValueType().getStoredType() == DataType.STRING) {
-              columnValueToIndex = new String[]{String.valueOf(value)};
-            } else if (forwardIndexCreator.getValueType().getStoredType() == DataType.BYTES) {
-              columnValueToIndex = new byte[][]{String.valueOf(value).getBytes(UTF_8)};
-            } else {
-              throw new RuntimeException("Text Index is only supported for STRING and BYTES stored type");
-            }
-          }
-          Object[] values = (Object[]) columnValueToIndex;
-          int length = values.length;
-          switch (forwardIndexCreator.getValueType()) {
-            case INT:
-              int[] ints = new int[length];
-              for (int i = 0; i < length; i++) {
-                ints[i] = (Integer) values[i];
+          if (forwardIndexCreator != null) {
+            if (textIndexCreator != null && !shouldStoreRawValueForTextIndex(columnName)) {
+              Object value = _columnProperties.get(columnName).get(FieldConfig.TEXT_INDEX_RAW_VALUE);
+              if (value == null) {
+                value = FieldConfig.TEXT_INDEX_DEFAULT_RAW_VALUE;
               }
-              forwardIndexCreator.putIntMV(ints);
-              break;
-            case LONG:
-              long[] longs = new long[length];
-              for (int i = 0; i < length; i++) {
-                longs[i] = (Long) values[i];
-              }
-              forwardIndexCreator.putLongMV(longs);
-              break;
-            case FLOAT:
-              float[] floats = new float[length];
-              for (int i = 0; i < length; i++) {
-                floats[i] = (Float) values[i];
-              }
-              forwardIndexCreator.putFloatMV(floats);
-              break;
-            case DOUBLE:
-              double[] doubles = new double[length];
-              for (int i = 0; i < length; i++) {
-                doubles[i] = (Double) values[i];
-              }
-              forwardIndexCreator.putDoubleMV(doubles);
-              break;
-            case STRING:
-              if (values instanceof String[]) {
-                forwardIndexCreator.putStringMV((String[]) values);
+              if (forwardIndexCreator.getValueType().getStoredType() == DataType.STRING) {
+                columnValueToIndex = new String[]{String.valueOf(value)};
+              } else if (forwardIndexCreator.getValueType().getStoredType() == DataType.BYTES) {
+                columnValueToIndex = new byte[][]{String.valueOf(value).getBytes(UTF_8)};
               } else {
-                String[] strings = new String[length];
-                for (int i = 0; i < length; i++) {
-                  strings[i] = (String) values[i];
-                }
-                forwardIndexCreator.putStringMV(strings);
+                throw new RuntimeException("Text Index is only supported for STRING and BYTES stored type");
               }
-              break;
-            case BYTES:
-              if (values instanceof byte[][]) {
-                forwardIndexCreator.putBytesMV((byte[][]) values);
-              } else {
-                byte[][] bytesArray = new byte[length][];
+            }
+            Object[] values = (Object[]) columnValueToIndex;
+            int length = values.length;
+            switch (forwardIndexCreator.getValueType()) {
+              case INT:
+                int[] ints = new int[length];
                 for (int i = 0; i < length; i++) {
-                  bytesArray[i] = (byte[]) values[i];
+                  ints[i] = (Integer) values[i];
                 }
-                forwardIndexCreator.putBytesMV(bytesArray);
-              }
-              break;
-            default:
-              throw new IllegalStateException();
+                forwardIndexCreator.putIntMV(ints);
+                break;
+              case LONG:
+                long[] longs = new long[length];
+                for (int i = 0; i < length; i++) {
+                  longs[i] = (Long) values[i];
+                }
+                forwardIndexCreator.putLongMV(longs);
+                break;
+              case FLOAT:
+                float[] floats = new float[length];
+                for (int i = 0; i < length; i++) {
+                  floats[i] = (Float) values[i];
+                }
+                forwardIndexCreator.putFloatMV(floats);
+                break;
+              case DOUBLE:
+                double[] doubles = new double[length];
+                for (int i = 0; i < length; i++) {
+                  doubles[i] = (Double) values[i];
+                }
+                forwardIndexCreator.putDoubleMV(doubles);
+                break;
+              case STRING:
+                if (values instanceof String[]) {
+                  forwardIndexCreator.putStringMV((String[]) values);
+                } else {
+                  String[] strings = new String[length];
+                  for (int i = 0; i < length; i++) {
+                    strings[i] = (String) values[i];
+                  }
+                  forwardIndexCreator.putStringMV(strings);
+                }
+                break;
+              case BYTES:
+                if (values instanceof byte[][]) {
+                  forwardIndexCreator.putBytesMV((byte[][]) values);
+                } else {
+                  byte[][] bytesArray = new byte[length][];
+                  for (int i = 0; i < length; i++) {
+                    bytesArray[i] = (byte[]) values[i];
+                  }
+                  forwardIndexCreator.putBytesMV(bytesArray);
+                }
+                break;
+              default:
+                throw new IllegalStateException();
+            }
           }
         }
       }
@@ -856,9 +915,13 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       String maxValue) {
     if (isValidPropertyValue(minValue)) {
       properties.setProperty(getKeyFor(column, MIN_VALUE), minValue);
+    } else {
+      properties.setProperty(getKeyFor(column, MIN_MAX_VALUE_INVALID), true);
     }
     if (isValidPropertyValue(maxValue)) {
       properties.setProperty(getKeyFor(column, MAX_VALUE), maxValue);
+    } else {
+      properties.setProperty(getKeyFor(column, MIN_MAX_VALUE_INVALID), true);
     }
   }
 

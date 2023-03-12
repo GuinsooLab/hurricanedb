@@ -20,10 +20,11 @@ package org.apache.pinot.core.operator.filter;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.blocks.FilterBlock;
 import org.apache.pinot.core.operator.docidsets.AndDocIdSet;
-import org.apache.pinot.core.operator.docidsets.FilterBlockDocIdSet;
 import org.apache.pinot.spi.trace.Tracing;
 
 
@@ -36,10 +37,13 @@ public class CombinedFilterOperator extends BaseFilterOperator {
 
   private final BaseFilterOperator _mainFilterOperator;
   private final BaseFilterOperator _subFilterOperator;
+  private final Map<String, String> _queryOptions;
 
-  public CombinedFilterOperator(BaseFilterOperator mainFilterOperator, BaseFilterOperator subFilterOperator) {
+  public CombinedFilterOperator(BaseFilterOperator mainFilterOperator, BaseFilterOperator subFilterOperator,
+      Map<String, String> queryOptions) {
     _mainFilterOperator = mainFilterOperator;
     _subFilterOperator = subFilterOperator;
+    _queryOptions = queryOptions;
   }
 
   @Override
@@ -55,8 +59,11 @@ public class CombinedFilterOperator extends BaseFilterOperator {
   @Override
   protected FilterBlock getNextBlock() {
     Tracing.activeRecording().setNumChildren(2);
-    FilterBlockDocIdSet mainFilterDocIdSet = _mainFilterOperator.nextBlock().getNonScanFilterBLockDocIdSet();
-    FilterBlockDocIdSet subFilterDocIdSet = _subFilterOperator.nextBlock().getBlockDocIdSet();
-    return new FilterBlock(new AndDocIdSet(Arrays.asList(mainFilterDocIdSet, subFilterDocIdSet)));
+    if (_mainFilterOperator instanceof MatchAllFilterOperator) {
+      return _subFilterOperator.nextBlock();
+    }
+    BlockDocIdSet mainFilterDocIdSet = _mainFilterOperator.nextBlock().getNonScanFilterBLockDocIdSet();
+    BlockDocIdSet subFilterDocIdSet = _subFilterOperator.nextBlock().getBlockDocIdSet();
+    return new FilterBlock(new AndDocIdSet(Arrays.asList(mainFilterDocIdSet, subFilterDocIdSet), _queryOptions));
   }
 }

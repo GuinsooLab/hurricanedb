@@ -23,9 +23,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
 import java.net.URLEncoder;
-import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -128,14 +126,15 @@ public class SparkSegmentGenerationJobRunner implements IngestionJobRunner, Seri
     for (PinotFSSpec pinotFSSpec : pinotFSSpecs) {
       PinotFSFactory.register(pinotFSSpec.getScheme(), pinotFSSpec.getClassName(), new PinotConfiguration(pinotFSSpec));
     }
-
-    //Get pinotFS for input
+    //Get list of files to process
     URI inputDirURI = new URI(_spec.getInputDirURI());
     if (inputDirURI.getScheme() == null) {
       inputDirURI = new File(_spec.getInputDirURI()).toURI();
     }
     PinotFS inputDirFS = PinotFSFactory.create(inputDirURI.getScheme());
-
+    List<String> filteredFiles = SegmentGenerationUtils.listMatchedFilesWithRecursiveOption(inputDirFS, inputDirURI,
+        _spec.getIncludeFileNamePattern(), _spec.getExcludeFileNamePattern(), _spec.isSearchRecursively());
+    LOGGER.info("Found {} files to create Pinot segments!", filteredFiles.size());
     //Get outputFS for writing output pinot segments
     URI outputDirURI = new URI(_spec.getOutputDirURI());
     if (outputDirURI.getScheme() == null) {
@@ -159,39 +158,6 @@ public class SparkSegmentGenerationJobRunner implements IngestionJobRunner, Seri
       }
       outputDirFS.mkdir(stagingDirURI);
     }
-    //Get list of files to process
-    String[] files = inputDirFS.listFiles(inputDirURI, true);
-
-    //TODO: sort input files based on creation time
-    List<String> filteredFiles = new ArrayList<>();
-    PathMatcher includeFilePathMatcher = null;
-    if (_spec.getIncludeFileNamePattern() != null) {
-      includeFilePathMatcher = FileSystems.getDefault().getPathMatcher(_spec.getIncludeFileNamePattern());
-    }
-    PathMatcher excludeFilePathMatcher = null;
-    if (_spec.getExcludeFileNamePattern() != null) {
-      excludeFilePathMatcher = FileSystems.getDefault().getPathMatcher(_spec.getExcludeFileNamePattern());
-    }
-
-    for (String file : files) {
-      if (includeFilePathMatcher != null) {
-        if (!includeFilePathMatcher.matches(Paths.get(file))) {
-          continue;
-        }
-      }
-      if (excludeFilePathMatcher != null) {
-        if (excludeFilePathMatcher.matches(Paths.get(file))) {
-          continue;
-        }
-      }
-      if (!inputDirFS.isDirectory(new URI(file))) {
-        // In case PinotFS implementations list files without a scheme (e.g. hdfs://), then we may lose it in the
-        // input file path. Call SegmentGenerationUtils.getFileURI() to fix this up.
-        filteredFiles.add(SegmentGenerationUtils.getFileURI(file, inputDirURI).toString());
-      }
-    }
-
-    LOGGER.info("Found {} files to create Pinot segments!", filteredFiles.size());
     try {
       JavaSparkContext sparkContext = JavaSparkContext.fromSparkContext(SparkContext.getOrCreate());
 
@@ -323,20 +289,28 @@ public class SparkSegmentGenerationJobRunner implements IngestionJobRunner, Seri
           long compressedSegmentSize = FileUtils.sizeOf(localSegmentTarFile);
           LOGGER.info("Size for segment: {}, uncompressed: {}, compressed: {}", segmentName,
               DataSizeUtils.fromBytes(uncompressedSegmentSize), DataSizeUtils.fromBytes(compressedSegmentSize));
-          //move segment to output PinotFS
-          URI outputSegmentTarURI =
-              SegmentGenerationUtils.getRelativeOutputPath(finalInputDirURI, inputFileURI, finalOutputDirURI)
-                  .resolve(segmentTarFileName);
-          LOGGER.info("Trying to move segment tar file from: [{}] to [{}]", localSegmentTarFile, outputSegmentTarURI);
-          if (!_spec.isOverwriteOutput() && PinotFSFactory.create(outputSegmentTarURI.getScheme())
-              .exists(outputSegmentTarURI)) {
-            LOGGER.warn("Not overwrite existing output segment tar file: {}",
-                finalOutputDirFS.exists(outputSegmentTarURI));
-          } else {
-            finalOutputDirFS.copyFromLocalFile(localSegmentTarFile, outputSegmentTarURI);
+          // Move segment to output PinotFS
+          URI relativeOutputPath =
+              SegmentGenerationUtils.getRelativeOutputPath(finalInputDirURI, inputFileURI, finalOutputDirURI);
+          URI outputSegmentTarURI = relativeOutputPath.resolve(segmentTarFileName);
+          SegmentGenerationJobUtils.moveLocalTarFileToRemote(localSegmentTarFile, outputSegmentTarURI,
+              _spec.isOverwriteOutput());
+
+          // Create and upload segment metadata tar file
+          String metadataTarFileName = URLEncoder.encode(segmentName + Constants.METADATA_TAR_GZ_FILE_EXT, "UTF-8");
+          URI outputMetadataTarURI = relativeOutputPath.resolve(metadataTarFileName);
+          if (finalOutputDirFS.exists(outputMetadataTarURI) && (_spec.isOverwriteOutput()
+              || !_spec.isCreateMetadataTarGz())) {
+            LOGGER.info("Deleting existing metadata tar gz file: {}", outputMetadataTarURI);
+            finalOutputDirFS.delete(outputMetadataTarURI, true);
+          }
+          if (taskSpec.isCreateMetadataTarGz()) {
+            File localMetadataTarFile = new File(localOutputTempDir, metadataTarFileName);
+            SegmentGenerationJobUtils.createSegmentMetadataTarGz(localSegmentDir, localMetadataTarFile);
+            SegmentGenerationJobUtils.moveLocalTarFileToRemote(localMetadataTarFile, outputMetadataTarURI,
+                _spec.isOverwriteOutput());
           }
           FileUtils.deleteQuietly(localSegmentDir);
-          FileUtils.deleteQuietly(localSegmentTarFile);
           FileUtils.deleteQuietly(localInputDataFile);
         }
       });

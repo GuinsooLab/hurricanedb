@@ -37,6 +37,7 @@ import org.apache.pinot.common.utils.LLCSegmentName;
 import org.apache.pinot.core.data.manager.InstanceDataManager;
 import org.apache.pinot.core.data.manager.offline.OfflineTableDataManager;
 import org.apache.pinot.core.data.manager.realtime.SegmentUploader;
+import org.apache.pinot.core.transport.HttpServerThreadPoolConfig;
 import org.apache.pinot.core.transport.ListenerConfig;
 import org.apache.pinot.segment.local.data.manager.TableDataManager;
 import org.apache.pinot.segment.local.data.manager.TableDataManagerConfig;
@@ -49,8 +50,6 @@ import org.apache.pinot.segment.spi.creator.SegmentGeneratorConfig;
 import org.apache.pinot.segment.spi.creator.SegmentIndexCreationDriver;
 import org.apache.pinot.server.access.AllowAllAccessFactory;
 import org.apache.pinot.server.starter.ServerInstance;
-import org.apache.pinot.server.starter.helix.AdminApiApplication;
-import org.apache.pinot.server.starter.helix.DefaultHelixStarterServerConfig;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.spi.utils.NetUtils;
@@ -84,9 +83,10 @@ public abstract class BaseResourceTest {
   private final Map<String, TableDataManager> _tableDataManagerMap = new HashMap<>();
   protected final List<ImmutableSegment> _realtimeIndexSegments = new ArrayList<>();
   protected final List<ImmutableSegment> _offlineIndexSegments = new ArrayList<>();
-  private File _avroFile;
-  private AdminApiApplication _adminApiApplication;
+  protected File _avroFile;
+  protected AdminApiApplication _adminApiApplication;
   protected WebTarget _webTarget;
+  protected String _instanceId;
 
   @SuppressWarnings("SuspiciousMethodCalls")
   @BeforeClass
@@ -106,6 +106,7 @@ public abstract class BaseResourceTest {
 
     // Mock the server instance
     ServerInstance serverInstance = mock(ServerInstance.class);
+    when(serverInstance.getServerMetrics()).thenReturn(mock(ServerMetrics.class));
     when(serverInstance.getInstanceDataManager()).thenReturn(instanceDataManager);
     when(serverInstance.getInstanceDataManager().getSegmentFileDirectory())
         .thenReturn(FileUtils.getTempDirectoryPath());
@@ -127,18 +128,18 @@ public abstract class BaseResourceTest {
     setUpSegment(realtimeTableName, null, "default", _realtimeIndexSegments);
     setUpSegment(offlineTableName, null, "default", _offlineIndexSegments);
 
-    PinotConfiguration serverConf = DefaultHelixStarterServerConfig.loadDefaultServerConf();
+    PinotConfiguration serverConf = new PinotConfiguration();
     String hostname = serverConf.getProperty(CommonConstants.Helix.KEY_OF_SERVER_NETTY_HOST,
         serverConf.getProperty(CommonConstants.Helix.SET_INSTANCE_ID_TO_HOSTNAME_KEY, false)
             ? NetUtils.getHostnameOrAddress() : NetUtils.getHostAddress());
     int port = serverConf.getProperty(CommonConstants.Helix.KEY_OF_SERVER_NETTY_PORT,
         CommonConstants.Helix.DEFAULT_SERVER_NETTY_PORT);
-    serverConf.setProperty(CommonConstants.Server.CONFIG_OF_INSTANCE_ID,
-        CommonConstants.Helix.PREFIX_OF_SERVER_INSTANCE + hostname + "_" + port);
+    _instanceId = CommonConstants.Helix.PREFIX_OF_SERVER_INSTANCE + hostname + "_" + port;
+    serverConf.setProperty(CommonConstants.Server.CONFIG_OF_INSTANCE_ID, _instanceId);
     _adminApiApplication = new AdminApiApplication(serverInstance, new AllowAllAccessFactory(), serverConf);
     _adminApiApplication.start(Collections.singletonList(
         new ListenerConfig(CommonConstants.HTTP_PROTOCOL, "0.0.0.0", CommonConstants.Server.DEFAULT_ADMIN_API_PORT,
-            CommonConstants.HTTP_PROTOCOL, new TlsConfig())));
+            CommonConstants.HTTP_PROTOCOL, new TlsConfig(), HttpServerThreadPoolConfig.defaultInstance())));
 
     _webTarget = ClientBuilder.newClient().target(
         String.format("http://%s:%d", NetUtils.getHostAddress(), CommonConstants.Server.DEFAULT_ADMIN_API_PORT));

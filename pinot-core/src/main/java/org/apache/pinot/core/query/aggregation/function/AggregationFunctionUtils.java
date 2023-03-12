@@ -18,21 +18,33 @@
  */
 package org.apache.pinot.core.query.aggregation.function;
 
-import com.google.common.math.DoubleMath;
-import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.pinot.common.CustomObject;
+import org.apache.pinot.common.datatable.DataTable;
 import org.apache.pinot.common.request.context.ExpressionContext;
+import org.apache.pinot.common.request.context.FilterContext;
+import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
 import org.apache.pinot.core.common.BlockValSet;
+import org.apache.pinot.core.common.ObjectSerDeUtils;
 import org.apache.pinot.core.operator.blocks.TransformBlock;
+import org.apache.pinot.core.operator.filter.BaseFilterOperator;
+import org.apache.pinot.core.operator.filter.CombinedFilterOperator;
+import org.apache.pinot.core.operator.transform.TransformOperator;
+import org.apache.pinot.core.plan.DocIdSetPlanNode;
+import org.apache.pinot.core.plan.FilterPlanNode;
+import org.apache.pinot.core.plan.TransformPlanNode;
+import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
+import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.index.startree.AggregationFunctionColumnPair;
 
 
@@ -64,31 +76,6 @@ public class AggregationFunctionUtils {
       }
     }
     return null;
-  }
-
-  public static String formatValue(Object value) {
-    if (value instanceof Double) {
-      double doubleValue = (double) value;
-
-      // NOTE: String.format() is very expensive, so avoid it for whole numbers that can fit in Long.
-      //       We simply append ".00000" to long, in order to keep the existing behavior.
-      if (doubleValue <= Long.MAX_VALUE && doubleValue >= Long.MIN_VALUE && DoubleMath.isMathematicalInteger(
-          doubleValue)) {
-        return (long) doubleValue + ".00000";
-      } else {
-        return String.format(Locale.US, "%1.5f", doubleValue);
-      }
-    } else {
-      return value.toString();
-    }
-  }
-
-  public static Serializable getSerializableValue(Object value) {
-    if (value instanceof Number) {
-      return (Number) value;
-    } else {
-      return value.toString();
-    }
   }
 
   /**
@@ -142,5 +129,147 @@ public class AggregationFunctionUtils {
     ExpressionContext expression = ExpressionContext.forIdentifier(aggregationFunctionColumnPair.getColumn());
     BlockValSet blockValSet = transformBlock.getBlockValueSet(aggregationFunctionColumnPair.toColumnName());
     return Collections.singletonMap(expression, blockValSet);
+  }
+
+  /**
+   * Reads the intermediate result from the {@link DataTable}.
+   *
+   * TODO: Move ser/de into AggregationFunction interface
+   */
+  public static Object getIntermediateResult(DataTable dataTable, ColumnDataType columnDataType, int rowId, int colId) {
+    switch (columnDataType) {
+      case LONG:
+        return dataTable.getLong(rowId, colId);
+      case DOUBLE:
+        return dataTable.getDouble(rowId, colId);
+      case OBJECT:
+        CustomObject customObject = dataTable.getCustomObject(rowId, colId);
+        return customObject != null ? ObjectSerDeUtils.deserialize(customObject) : null;
+      default:
+        throw new IllegalStateException("Illegal column data type in intermediate result: " + columnDataType);
+    }
+  }
+
+  /**
+   * Reads the converted final result from the {@link DataTable}. It should be equivalent to running
+   * {@link AggregationFunction#extractFinalResult(Object)} and {@link ColumnDataType#convert(Object)}.
+   */
+  public static Object getConvertedFinalResult(DataTable dataTable, ColumnDataType columnDataType, int rowId,
+      int colId) {
+    switch (columnDataType) {
+      case INT:
+        return dataTable.getInt(rowId, colId);
+      case LONG:
+        return dataTable.getLong(rowId, colId);
+      case FLOAT:
+        return dataTable.getFloat(rowId, colId);
+      case DOUBLE:
+        return dataTable.getDouble(rowId, colId);
+      case BIG_DECIMAL:
+        return dataTable.getBigDecimal(rowId, colId);
+      case STRING:
+        return dataTable.getString(rowId, colId);
+      case BYTES:
+        return dataTable.getBytes(rowId, colId).getBytes();
+      case DOUBLE_ARRAY:
+        return dataTable.getDoubleArray(rowId, colId);
+      default:
+        throw new IllegalStateException("Illegal column data type in final result: " + columnDataType);
+    }
+  }
+
+  /**
+   * Build a filter operator from the given FilterContext.
+   *
+   * It returns the FilterPlanNode to allow reusing plan level components such as predicate
+   * evaluator map
+   */
+  public static Pair<FilterPlanNode, BaseFilterOperator> buildFilterOperator(IndexSegment indexSegment,
+      QueryContext queryContext, FilterContext filterContext) {
+    FilterPlanNode filterPlanNode = new FilterPlanNode(indexSegment, queryContext, filterContext);
+    return Pair.of(filterPlanNode, filterPlanNode.run());
+  }
+
+  public static Pair<FilterPlanNode, BaseFilterOperator> buildFilterOperator(IndexSegment indexSegment,
+      QueryContext queryContext) {
+    return buildFilterOperator(indexSegment, queryContext, queryContext.getFilter());
+  }
+
+  public static TransformOperator buildTransformOperatorForFilteredAggregates(IndexSegment indexSegment,
+      QueryContext queryContext, BaseFilterOperator filterOperator, @Nullable ExpressionContext[] groupByExpressions) {
+    AggregationFunction[] aggregationFunctions = queryContext.getAggregationFunctions();
+    assert aggregationFunctions != null;
+    Set<ExpressionContext> expressionsToTransform =
+        collectExpressionsToTransform(aggregationFunctions, groupByExpressions);
+    return new TransformPlanNode(indexSegment, queryContext, expressionsToTransform, DocIdSetPlanNode.MAX_DOC_PER_CALL,
+        filterOperator).run();
+  }
+
+  /**
+   * Build pairs of filtered aggregation functions and corresponding transform operator
+   * @param mainPredicateFilterOperator Filter operator corresponding to the main predicate
+   * @param mainTransformOperator Transform operator corresponding to the main predicate
+   */
+  public static List<Pair<AggregationFunction[], TransformOperator>> buildFilteredAggTransformPairs(
+      IndexSegment indexSegment, QueryContext queryContext, BaseFilterOperator mainPredicateFilterOperator,
+      TransformOperator mainTransformOperator, @Nullable ExpressionContext[] groupByExpressions) {
+    Map<FilterContext, Pair<List<AggregationFunction>, TransformOperator>> filterContextToAggFuncsMap = new HashMap<>();
+    List<AggregationFunction> nonFilteredAggregationFunctions = new ArrayList<>();
+    List<Pair<AggregationFunction, FilterContext>> aggregationFunctions =
+        queryContext.getFilteredAggregationFunctions();
+    List<Pair<AggregationFunction[], TransformOperator>> aggToTransformOpList = new ArrayList<>();
+
+    // For each aggregation function, check if the aggregation function is a filtered agg.
+    // If it is, populate the corresponding filter operator and corresponding transform operator
+    assert aggregationFunctions != null;
+    for (Pair<AggregationFunction, FilterContext> inputPair : aggregationFunctions) {
+      AggregationFunction aggFunc = inputPair.getLeft();
+      FilterContext currentFilterExpression = inputPair.getRight();
+      if (currentFilterExpression != null) {
+        if (filterContextToAggFuncsMap.get(currentFilterExpression) != null) {
+          filterContextToAggFuncsMap.get(currentFilterExpression).getLeft().add(aggFunc);
+          continue;
+        }
+        Pair<FilterPlanNode, BaseFilterOperator> filterPlanOpPair =
+            buildFilterOperator(indexSegment, queryContext, currentFilterExpression);
+        BaseFilterOperator wrappedFilterOperator =
+            new CombinedFilterOperator(mainPredicateFilterOperator, filterPlanOpPair.getRight(),
+                queryContext.getQueryOptions());
+        TransformOperator newTransformOperator =
+            buildTransformOperatorForFilteredAggregates(indexSegment, queryContext, wrappedFilterOperator,
+                groupByExpressions);
+        // For each transform operator, associate it with the underlying expression. This allows
+        // fetching the relevant TransformOperator when resolving blocks during aggregation
+        // execution
+        List<AggregationFunction> aggFunctionList = new ArrayList<>();
+        aggFunctionList.add(aggFunc);
+        filterContextToAggFuncsMap.put(currentFilterExpression, Pair.of(aggFunctionList, newTransformOperator));
+      } else {
+        nonFilteredAggregationFunctions.add(aggFunc);
+      }
+    }
+    // Convert to array since FilteredGroupByOperator expects it
+    for (Pair<List<AggregationFunction>, TransformOperator> pair : filterContextToAggFuncsMap.values()) {
+      List<AggregationFunction> aggregationFunctionList = pair.getLeft();
+      if (aggregationFunctionList == null) {
+        throw new IllegalStateException("Null aggregation list seen");
+      }
+      aggToTransformOpList.add(Pair.of(aggregationFunctionList.toArray(new AggregationFunction[0]), pair.getRight()));
+    }
+
+    if (!nonFilteredAggregationFunctions.isEmpty()) {
+      aggToTransformOpList.add(
+          Pair.of(nonFilteredAggregationFunctions.toArray(new AggregationFunction[0]), mainTransformOperator));
+    }
+
+    return aggToTransformOpList;
+  }
+
+  public static String getResultColumnName(AggregationFunction aggregationFunction, @Nullable FilterContext filter) {
+      String columnName = aggregationFunction.getResultColumnName();
+      if (filter != null) {
+        columnName += " FILTER(WHERE " + filter + ")";
+      }
+      return columnName;
   }
 }

@@ -18,29 +18,77 @@
  */
 package org.apache.pinot.tools;
 
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
-import java.io.File;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.apache.commons.io.FileUtils;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.tools.admin.PinotAdministrator;
 import org.apache.pinot.tools.admin.command.QuickstartRunner;
 
-import static org.apache.pinot.tools.Quickstart.prettyPrintResponse;
 
-
-public class MultistageEngineQuickStart extends QuickStartBase {
+public class MultistageEngineQuickStart extends Quickstart {
+  private static final String[] MULTI_STAGE_TABLE_DIRECTORIES = new String[]{
+      "examples/batch/airlineStats",
+      "examples/batch/baseballStats",
+      "examples/batch/billing",
+      "examples/batch/dimBaseballTeams",
+      "examples/batch/githubEvents",
+      "examples/batch/githubComplexTypeEvents",
+      "examples/batch/ssb/customer",
+      "examples/batch/ssb/dates",
+      "examples/batch/ssb/lineorder",
+      "examples/batch/ssb/part",
+      "examples/batch/ssb/supplier",
+      "examples/batch/starbucksStores",
+  };
 
   @Override
   public List<String> types() {
     return Collections.singletonList("MULTI_STAGE");
+  }
+
+  @Override
+  public void runSampleQueries(QuickstartRunner runner)
+      throws Exception {
+
+    printStatus(Quickstart.Color.YELLOW, "***** Multi-stage engine quickstart setup complete *****");
+    Map<String, String> queryOptions = Collections.singletonMap("queryOptions",
+        CommonConstants.Broker.Request.QueryOptionKey.USE_MULTISTAGE_ENGINE + "=true");
+    String q1 = "SELECT count(*) FROM baseballStats_OFFLINE LIMIT 10";
+    printStatus(Quickstart.Color.YELLOW, "Total number of documents in the table");
+    printStatus(Quickstart.Color.CYAN, "Query : " + q1);
+    printStatus(Quickstart.Color.YELLOW, prettyPrintResponse(runner.runQuery(q1, queryOptions)));
+    printStatus(Quickstart.Color.GREEN, "***************************************************");
+
+    String q2 = "SELECT a.playerID, a.runs, a.yearID, b.runs, b.yearID"
+        + " FROM baseballStats_OFFLINE AS a JOIN baseballStats_OFFLINE AS b ON a.playerID = b.playerID"
+        + " WHERE a.runs > 160 AND b.runs < 2 LIMIT 10";
+    printStatus(Quickstart.Color.YELLOW, "Correlate the same player(s) with more than 160-run some year(s) and"
+        + " with less than 2-run some other year(s)");
+    printStatus(Quickstart.Color.CYAN, "Query : " + q2);
+    printStatus(Quickstart.Color.YELLOW, prettyPrintResponse(runner.runQuery(q2, queryOptions)));
+    printStatus(Quickstart.Color.GREEN, "***************************************************");
+
+    String q3 = "SELECT a.playerName, a.teamID, b.teamName \n"
+        + "FROM baseballStats_OFFLINE AS a\n"
+        + "JOIN dimBaseballTeams_OFFLINE AS b\n"
+        + "ON a.teamID = b.teamID LIMIT 10";
+    printStatus(Quickstart.Color.YELLOW, "Baseball Stats with joined team names");
+    printStatus(Quickstart.Color.CYAN, "Query : " + q3);
+    printStatus(Quickstart.Color.YELLOW, prettyPrintResponse(runner.runQuery(q3, queryOptions)));
+    printStatus(Quickstart.Color.GREEN, "***************************************************");
+
+    printStatus(Quickstart.Color.GREEN, "***************************************************");
+    printStatus(Quickstart.Color.YELLOW, "Example query run completed.");
+    printStatus(Quickstart.Color.GREEN, "***************************************************");
+  }
+
+  @Override
+  public String[] getDefaultBatchTableDirectories() {
+    return MULTI_STAGE_TABLE_DIRECTORIES;
   }
 
   @Override
@@ -51,72 +99,9 @@ public class MultistageEngineQuickStart extends QuickStartBase {
     return overrides;
   }
 
-  public void execute()
-      throws Exception {
-    File quickstartTmpDir = new File(_dataDir, String.valueOf(System.currentTimeMillis()));
-
-    // Baseball stat table
-    File baseBallStatsBaseDir = new File(quickstartTmpDir, "baseballStats");
-    File schemaFile = new File(baseBallStatsBaseDir, "baseballStats_schema.json");
-    File tableConfigFile = new File(baseBallStatsBaseDir, "baseballStats_offline_table_config.json");
-    File ingestionJobSpecFile = new File(baseBallStatsBaseDir, "ingestionJobSpec.yaml");
-    ClassLoader classLoader = Quickstart.class.getClassLoader();
-    URL resource = classLoader.getResource("examples/batch/baseballStats/baseballStats_schema.json");
-    Preconditions.checkNotNull(resource);
-    FileUtils.copyURLToFile(resource, schemaFile);
-    resource = classLoader.getResource("examples/batch/baseballStats/baseballStats_offline_table_config.json");
-    Preconditions.checkNotNull(resource);
-    FileUtils.copyURLToFile(resource, tableConfigFile);
-    resource = classLoader.getResource("examples/batch/baseballStats/ingestionJobSpec.yaml");
-    Preconditions.checkNotNull(resource);
-    FileUtils.copyURLToFile(resource, ingestionJobSpecFile);
-    QuickstartTableRequest request = new QuickstartTableRequest(baseBallStatsBaseDir.getAbsolutePath());
-
-    File tempDir = new File(quickstartTmpDir, "tmp");
-    FileUtils.forceMkdir(tempDir);
-    QuickstartRunner runner =
-        new QuickstartRunner(Lists.newArrayList(request), 1, 1, 1, 1, tempDir, getConfigOverrides());
-
-    printStatus(Quickstart.Color.CYAN, "***** Starting Zookeeper, controller, broker and server *****");
-    runner.startAll();
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-      try {
-        printStatus(Quickstart.Color.GREEN, "***** Shutting down offline quick start *****");
-        runner.stop();
-        FileUtils.deleteDirectory(quickstartTmpDir);
-      } catch (Exception e) {
-        e.printStackTrace();
-      }
-    }));
-    printStatus(Quickstart.Color.CYAN, "***** Bootstrap baseballStats table *****");
-    runner.bootstrapTable();
-
-    waitForBootstrapToComplete(null);
-
-    Map<String, String> queryOptions = Collections.singletonMap(
-        CommonConstants.Broker.Request.QueryOptionKey.USE_MULTISTAGE_ENGINE, "true");
-
-    printStatus(Quickstart.Color.YELLOW, "***** Multi-stage engine quickstart setup complete *****");
-    String q1 = "SELECT count(*) FROM baseballStats_OFFLINE limit 1";
-    printStatus(Quickstart.Color.YELLOW, "Total number of documents in the table");
-    printStatus(Quickstart.Color.CYAN, "Query : " + q1);
-    printStatus(Quickstart.Color.YELLOW, prettyPrintResponse(runner.runQuery(q1, queryOptions)));
-    printStatus(Quickstart.Color.GREEN, "***************************************************");
-
-    String q2 = "SELECT a.playerID, a.runs, a.yearID, b.runs, b.yearID"
-        + " FROM baseballStats_OFFLINE AS a JOIN baseballStats_OFFLINE AS b ON a.playerID = b.playerID"
-        + " WHERE a.runs > 160 AND b.runs < 2";
-    printStatus(Quickstart.Color.YELLOW, "Correlate the same player(s) with more than 160-run some year(s) and"
-        + " with less than 2-run some other year(s)");
-    printStatus(Quickstart.Color.CYAN, "Query : " + q2);
-    printStatus(Quickstart.Color.YELLOW, prettyPrintResponse(runner.runQuery(q2, queryOptions)));
-    printStatus(Quickstart.Color.GREEN, "***************************************************");
-
-    printStatus(Quickstart.Color.GREEN, "***************************************************");
-    printStatus(Quickstart.Color.YELLOW, "Example query run completed.");
-    printStatus(Quickstart.Color.GREEN, "***************************************************");
-    printStatus(Quickstart.Color.YELLOW, "Please use broker port for executing multistage queries.");
-    printStatus(Quickstart.Color.GREEN, "***************************************************");
+  @Override
+  protected int getNumQuickstartRunnerServers() {
+    return 3;
   }
 
   public static void main(String[] args)

@@ -20,10 +20,11 @@ package org.apache.pinot.core.operator.filter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.operator.blocks.FilterBlock;
 import org.apache.pinot.core.operator.docidsets.AndDocIdSet;
-import org.apache.pinot.core.operator.docidsets.FilterBlockDocIdSet;
 import org.apache.pinot.spi.trace.Tracing;
 import org.roaringbitmap.buffer.BufferFastAggregation;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
@@ -33,19 +34,25 @@ public class AndFilterOperator extends BaseFilterOperator {
   private static final String EXPLAIN_NAME = "FILTER_AND";
 
   private final List<BaseFilterOperator> _filterOperators;
+  private final Map<String, String> _queryOptions;
+
+  public AndFilterOperator(List<BaseFilterOperator> filterOperators, Map<String, String> queryOptions) {
+    _filterOperators = filterOperators;
+    _queryOptions = queryOptions;
+  }
 
   public AndFilterOperator(List<BaseFilterOperator> filterOperators) {
-    _filterOperators = filterOperators;
+    this(filterOperators, null);
   }
 
   @Override
   protected FilterBlock getNextBlock() {
     Tracing.activeRecording().setNumChildren(_filterOperators.size());
-    List<FilterBlockDocIdSet> filterBlockDocIdSets = new ArrayList<>(_filterOperators.size());
+    List<BlockDocIdSet> blockDocIdSets = new ArrayList<>(_filterOperators.size());
     for (BaseFilterOperator filterOperator : _filterOperators) {
-      filterBlockDocIdSets.add(filterOperator.nextBlock().getBlockDocIdSet());
+      blockDocIdSets.add(filterOperator.nextBlock().getBlockDocIdSet());
     }
-    return new FilterBlock(new AndDocIdSet(filterBlockDocIdSets));
+    return new FilterBlock(new AndDocIdSet(blockDocIdSets, _queryOptions));
   }
 
   @Override
@@ -69,7 +76,6 @@ public class AndFilterOperator extends BaseFilterOperator {
     }
     return BufferFastAggregation.andCardinality(bitmaps);
   }
-
 
   @Override
   public List<Operator> getChildOperators() {

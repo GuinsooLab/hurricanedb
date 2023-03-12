@@ -18,17 +18,13 @@
  */
 package org.apache.pinot.core.operator.combine;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
-import org.apache.pinot.common.exception.QueryException;
-import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.core.common.Operator;
-import org.apache.pinot.core.operator.blocks.IntermediateResultsBlock;
+import org.apache.pinot.core.operator.blocks.results.BaseResultsBlock;
+import org.apache.pinot.core.operator.blocks.results.SelectionResultsBlock;
+import org.apache.pinot.core.operator.combine.merger.SelectionOnlyResultsBlockMerger;
 import org.apache.pinot.core.query.request.context.QueryContext;
-import org.apache.pinot.core.query.selection.SelectionOperatorUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 /**
@@ -38,19 +34,15 @@ import org.slf4j.LoggerFactory;
  * <p>NOTE: Selection order-by query with LIMIT 0 is treated as selection only query.
  */
 @SuppressWarnings("rawtypes")
-public class SelectionOnlyCombineOperator extends BaseCombineOperator {
-  private static final Logger LOGGER = LoggerFactory.getLogger(SelectionOnlyCombineOperator.class);
-
+public class SelectionOnlyCombineOperator extends BaseSingleBlockCombineOperator<SelectionResultsBlock> {
   private static final String EXPLAIN_NAME = "COMBINE_SELECT";
-
   private final int _numRowsToKeep;
 
   public SelectionOnlyCombineOperator(List<Operator> operators, QueryContext queryContext,
       ExecutorService executorService) {
-    super(operators, queryContext, executorService);
+    super(new SelectionOnlyResultsBlockMerger(queryContext), operators, queryContext, executorService);
     _numRowsToKeep = queryContext.getLimit();
   }
-
 
   @Override
   public String toExplainString() {
@@ -58,43 +50,14 @@ public class SelectionOnlyCombineOperator extends BaseCombineOperator {
   }
 
   @Override
-  protected IntermediateResultsBlock getNextBlock() {
+  protected BaseResultsBlock getNextBlock() {
     // For LIMIT 0 query, only process one segment to get the data schema
     if (_numRowsToKeep == 0) {
-      IntermediateResultsBlock resultsBlock = (IntermediateResultsBlock) _operators.get(0).nextBlock();
+      BaseResultsBlock resultsBlock = (BaseResultsBlock) _operators.get(0).nextBlock();
       CombineOperatorUtils.setExecutionStatistics(resultsBlock, _operators, 0, 1);
       return resultsBlock;
     }
 
     return super.getNextBlock();
-  }
-
-  @Override
-  protected boolean isQuerySatisfied(IntermediateResultsBlock resultsBlock) {
-    Collection<Object[]> selectionResult = resultsBlock.getSelectionResult();
-    assert selectionResult != null;
-    return selectionResult.size() == _numRowsToKeep;
-  }
-
-  @Override
-  protected void mergeResultsBlocks(IntermediateResultsBlock mergedBlock, IntermediateResultsBlock blockToMerge) {
-    DataSchema mergedDataSchema = mergedBlock.getDataSchema();
-    DataSchema dataSchemaToMerge = blockToMerge.getDataSchema();
-    assert mergedDataSchema != null && dataSchemaToMerge != null;
-    if (!mergedDataSchema.equals(dataSchemaToMerge)) {
-      String errorMessage =
-          String.format("Data schema mismatch between merged block: %s and block to merge: %s, drop block to merge",
-              mergedDataSchema, dataSchemaToMerge);
-      // NOTE: This is segment level log, so log at debug level to prevent flooding the log.
-      LOGGER.debug(errorMessage);
-      mergedBlock.addToProcessingExceptions(
-          QueryException.getException(QueryException.MERGE_RESPONSE_ERROR, errorMessage));
-      return;
-    }
-
-    Collection<Object[]> mergedRows = mergedBlock.getSelectionResult();
-    Collection<Object[]> rowsToMerge = blockToMerge.getSelectionResult();
-    assert mergedRows != null && rowsToMerge != null;
-    SelectionOperatorUtils.mergeWithoutOrdering(mergedRows, rowsToMerge, _numRowsToKeep);
   }
 }

@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.segment.spi.loader;
 
+import java.util.Map;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.env.PinotConfiguration;
@@ -31,17 +32,24 @@ public class SegmentDirectoryLoaderContext {
   private final TableConfig _tableConfig;
   private final Schema _schema;
   private final String _instanceId;
+  private final String _tableDataDir;
   private final String _segmentName;
   private final String _segmentCrc;
+  private final String _segmentTier;
+  private final Map<String, Map<String, String>> _instanceTierConfigs;
   private final PinotConfiguration _segmentDirectoryConfigs;
 
-  private SegmentDirectoryLoaderContext(TableConfig tableConfig, Schema schema, String instanceId, String segmentName,
-      String segmentCrc, PinotConfiguration segmentDirectoryConfigs) {
+  private SegmentDirectoryLoaderContext(TableConfig tableConfig, Schema schema, String instanceId, String tableDataDir,
+      String segmentName, String segmentCrc, String segmentTier, Map<String, Map<String, String>> instanceTierConfigs,
+      PinotConfiguration segmentDirectoryConfigs) {
     _tableConfig = tableConfig;
     _schema = schema;
     _instanceId = instanceId;
+    _tableDataDir = tableDataDir;
     _segmentName = segmentName;
     _segmentCrc = segmentCrc;
+    _segmentTier = segmentTier;
+    _instanceTierConfigs = instanceTierConfigs;
     _segmentDirectoryConfigs = segmentDirectoryConfigs;
   }
 
@@ -57,6 +65,10 @@ public class SegmentDirectoryLoaderContext {
     return _instanceId;
   }
 
+  public String getTableDataDir() {
+    return _tableDataDir;
+  }
+
   public String getSegmentName() {
     return _segmentName;
   }
@@ -65,16 +77,27 @@ public class SegmentDirectoryLoaderContext {
     return _segmentCrc;
   }
 
+  public String getSegmentTier() {
+    return _segmentTier;
+  }
+
   public PinotConfiguration getSegmentDirectoryConfigs() {
     return _segmentDirectoryConfigs;
+  }
+
+  public Map<String, Map<String, String>> getInstanceTierConfigs() {
+    return _instanceTierConfigs;
   }
 
   public static class Builder {
     private TableConfig _tableConfig;
     private Schema _schema;
     private String _instanceId;
+    private String _tableDataDir;
     private String _segmentName;
     private String _segmentCrc;
+    private String _segmentTier;
+    private Map<String, Map<String, String>> _instanceTierConfigs;
     private PinotConfiguration _segmentDirectoryConfigs;
 
     public Builder setTableConfig(TableConfig tableConfig) {
@@ -92,6 +115,11 @@ public class SegmentDirectoryLoaderContext {
       return this;
     }
 
+    public Builder setTableDataDir(String tableDataDir) {
+      _tableDataDir = tableDataDir;
+      return this;
+    }
+
     public Builder setSegmentName(String segmentName) {
       _segmentName = segmentName;
       return this;
@@ -102,14 +130,24 @@ public class SegmentDirectoryLoaderContext {
       return this;
     }
 
+    public Builder setSegmentTier(String segmentTier) {
+      _segmentTier = segmentTier;
+      return this;
+    }
+
+    public Builder setInstanceTierConfigs(Map<String, Map<String, String>> instanceTierConfigs) {
+      _instanceTierConfigs = instanceTierConfigs;
+      return this;
+    }
+
     public Builder setSegmentDirectoryConfigs(PinotConfiguration segmentDirectoryConfigs) {
       _segmentDirectoryConfigs = segmentDirectoryConfigs;
       return this;
     }
 
     public SegmentDirectoryLoaderContext build() {
-      return new SegmentDirectoryLoaderContext(_tableConfig, _schema, _instanceId, _segmentName, _segmentCrc,
-          _segmentDirectoryConfigs);
+      return new SegmentDirectoryLoaderContext(_tableConfig, _schema, _instanceId, _tableDataDir, _segmentName,
+          _segmentCrc, _segmentTier, _instanceTierConfigs, _segmentDirectoryConfigs);
     }
   }
 }

@@ -21,9 +21,6 @@ package org.apache.pinot.core.operator.blocks;
 import java.util.Map;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.core.common.Block;
-import org.apache.pinot.core.common.BlockDocIdSet;
-import org.apache.pinot.core.common.BlockDocIdValueSet;
-import org.apache.pinot.core.common.BlockMetadata;
 import org.apache.pinot.core.common.BlockValSet;
 import org.apache.pinot.core.operator.docvalsets.TransformBlockValSet;
 import org.apache.pinot.core.operator.transform.function.TransformFunction;
@@ -55,31 +52,11 @@ public class TransformBlock implements Block {
     if (expression.getType() == ExpressionContext.Type.IDENTIFIER) {
       return _projectionBlock.getBlockValueSet(expression.getIdentifier());
     } else {
-      return new TransformBlockValSet(_projectionBlock, _transformFunctionMap.get(expression));
+      return new TransformBlockValSet(_projectionBlock, _transformFunctionMap.get(expression), expression);
     }
   }
 
   public BlockValSet getBlockValueSet(String column) {
     return _projectionBlock.getBlockValueSet(column);
-  }
-
-  @Override
-  public BlockDocIdSet getBlockDocIdSet() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public BlockValSet getBlockValueSet() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public BlockDocIdValueSet getBlockDocIdValueSet() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public BlockMetadata getMetadata() {
-    throw new UnsupportedOperationException();
   }
 }

@@ -37,13 +37,14 @@ import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.helix.AccessOption;
 import org.apache.helix.HelixAdmin;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.model.ExternalView;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.utils.SegmentName;
 import org.apache.pinot.common.utils.URIUtils;
+import org.apache.pinot.controller.LeadControllerManager;
 import org.apache.pinot.spi.config.table.SegmentsValidationAndRetentionConfig;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.filesystem.PinotFS;
@@ -180,6 +181,9 @@ public class SegmentDeletionManager {
       }
       segmentsToDelete.removeAll(propStoreFailedSegs);
 
+      // TODO: If removing segments from deep store fails (e.g. controller crashes, deep store unavailable), these
+      //       segments will become orphans and not easy to track because their ZK metadata are already deleted.
+      //       Consider removing segments from deep store before cleaning up the ZK metadata.
       removeSegmentsFromStore(tableName, segmentsToDelete, deletedSegmentsRetentionMs);
     }
 
@@ -190,7 +194,6 @@ public class SegmentDeletionManager {
       long effectiveDeletionDelay = Math.min(deletionDelay * 2, MAX_DELETION_DELAY_SECONDS);
       LOGGER.info("Postponing deletion of {} segments from table {}", segmentsToRetryLater.size(), tableName);
       deleteSegmentsWithDelay(tableName, segmentsToRetryLater, deletedSegmentsRetentionMs, effectiveDeletionDelay);
-      return;
     }
   }
 
@@ -262,7 +265,7 @@ public class SegmentDeletionManager {
   /**
    * Removes aged deleted segments from the deleted directory
    */
-  public void removeAgedDeletedSegments() {
+  public void removeAgedDeletedSegments(LeadControllerManager leadControllerManager) {
     if (_dataDir != null) {
       URI deletedDirURI = URIUtils.getUri(_dataDir, DELETED_SEGMENTS);
       PinotFS pinotFS = PinotFSFactory.create(deletedDirURI.getScheme());
@@ -285,26 +288,29 @@ public class SegmentDeletionManager {
         }
 
         for (String tableNameDir : tableNameDirs) {
-          URI tableNameURI = URIUtils.getUri(tableNameDir);
-          // Get files that are aged
-          final String[] targetFiles = pinotFS.listFiles(tableNameURI, false);
-          int numFilesDeleted = 0;
-          for (String targetFile : targetFiles) {
-            URI targetURI = URIUtils.getUri(targetFile);
-            long deletionTimeMs = getDeletionTimeMsFromFile(targetFile, pinotFS.lastModified(targetURI));
-            if (System.currentTimeMillis() >= deletionTimeMs) {
-              if (!pinotFS.delete(targetURI, true)) {
-                LOGGER.warn("Cannot remove file {} from deleted directory.", targetURI.toString());
-              } else {
-                numFilesDeleted++;
+          String tableName = URIUtils.getLastPart(tableNameDir);
+          if (leadControllerManager.isLeaderForTable(tableName)) {
+            URI tableNameURI = URIUtils.getUri(tableNameDir);
+            // Get files that are aged
+            final String[] targetFiles = pinotFS.listFiles(tableNameURI, false);
+            int numFilesDeleted = 0;
+            for (String targetFile : targetFiles) {
+              URI targetURI = URIUtils.getUri(targetFile);
+              long deletionTimeMs = getDeletionTimeMsFromFile(targetFile, pinotFS.lastModified(targetURI));
+              if (System.currentTimeMillis() >= deletionTimeMs) {
+                if (!pinotFS.delete(targetURI, true)) {
+                  LOGGER.warn("Cannot remove file {} from deleted directory.", targetURI);
+                } else {
+                  numFilesDeleted++;
+                }
               }
             }
-          }
 
-          if (numFilesDeleted == targetFiles.length) {
-            // Delete directory if it's empty
-            if (!pinotFS.delete(tableNameURI, false)) {
-              LOGGER.warn("The directory {} cannot be removed.", tableNameDir);
+            if (numFilesDeleted == targetFiles.length) {
+              // Delete directory if it's empty
+              if (!pinotFS.delete(tableNameURI, false)) {
+                LOGGER.warn("The directory {} cannot be removed.", tableNameDir);
+              }
             }
           }
         }
@@ -335,7 +341,7 @@ public class SegmentDeletionManager {
   }
 
   @Nullable
-  private static Long getRetentionMsFromTableConfig(@Nullable TableConfig tableConfig) {
+  public static Long getRetentionMsFromTableConfig(@Nullable TableConfig tableConfig) {
     if (tableConfig != null) {
       SegmentsValidationAndRetentionConfig validationConfig = tableConfig.getValidationConfig();
       if (!StringUtils.isEmpty(validationConfig.getDeletedSegmentsRetentionPeriod())) {

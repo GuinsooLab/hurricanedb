@@ -62,6 +62,7 @@ public abstract class AbstractStageNode implements StageNode, ProtoSerializable 
     return _dataSchema;
   }
 
+  @Override
   public void setDataSchema(DataSchema dataSchema) {
     _dataSchema = dataSchema;
   }

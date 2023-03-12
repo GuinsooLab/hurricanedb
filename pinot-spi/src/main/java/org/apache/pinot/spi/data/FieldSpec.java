@@ -55,6 +55,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
   public static final String DEFAULT_DIMENSION_NULL_VALUE_OF_STRING = "null";
   public static final String DEFAULT_DIMENSION_NULL_VALUE_OF_JSON = "null";
   public static final byte[] DEFAULT_DIMENSION_NULL_VALUE_OF_BYTES = new byte[0];
+  public static final BigDecimal DEFAULT_DIMENSION_NULL_VALUE_OF_BIG_DECIMAL = BigDecimal.ZERO;
 
   public static final Integer DEFAULT_METRIC_NULL_VALUE_OF_INT = 0;
   public static final Long DEFAULT_METRIC_NULL_VALUE_OF_LONG = 0L;
@@ -191,7 +192,7 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     }
   }
 
-  private static Object getDefaultNullValue(FieldType fieldType, DataType dataType,
+  public static Object getDefaultNullValue(FieldType fieldType, DataType dataType,
       @Nullable String stringDefaultNullValue) {
     if (stringDefaultNullValue != null) {
       return dataType.convert(stringDefaultNullValue);
@@ -238,6 +239,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
               return DEFAULT_DIMENSION_NULL_VALUE_OF_JSON;
             case BYTES:
               return DEFAULT_DIMENSION_NULL_VALUE_OF_BYTES;
+            case BIG_DECIMAL:
+              return DEFAULT_DIMENSION_NULL_VALUE_OF_BIG_DECIMAL;
             default:
               throw new IllegalStateException("Unsupported dimension/time data type: " + dataType);
           }
@@ -451,7 +454,8 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
     }
 
     /**
-     * Returns {@code true} if the data type is numeric (INT, LONG, FLOAT, DOUBLE), {@code false} otherwise.
+     * Returns {@code true} if the data type is numeric (INT, LONG, FLOAT, DOUBLE, BIG_DECIMAL), {@code false}
+     * otherwise.
      */
     public boolean isNumeric() {
       return _numeric;
@@ -535,5 +539,20 @@ public abstract class FieldSpec implements Comparable<FieldSpec>, Serializable {
   public int compareTo(FieldSpec otherSpec) {
     // Sort fieldspecs based on their name
     return _name.compareTo(otherSpec._name);
+  }
+
+  /***
+   * Return true if it is backward compatible with the old FieldSpec.
+   * Backward compatibility requires
+   * all other fields except DefaultNullValue and Max Length should be retained.
+   *
+   * @param oldFieldSpec
+   * @return
+   */
+  public boolean isBackwardCompatibleWith(FieldSpec oldFieldSpec) {
+
+    return EqualityUtils.isEqual(_name, oldFieldSpec._name)
+            && EqualityUtils.isEqual(_dataType, oldFieldSpec._dataType)
+            && EqualityUtils.isEqual(_isSingleValueField, oldFieldSpec._isSingleValueField);
   }
 }

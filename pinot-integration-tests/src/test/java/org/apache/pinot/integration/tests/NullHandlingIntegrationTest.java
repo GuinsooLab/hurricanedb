@@ -22,6 +22,8 @@ import java.io.File;
 import java.util.List;
 import javax.annotation.Nullable;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.common.datatable.DataTableFactory;
+import org.apache.pinot.core.common.datatable.DataTableBuilderFactory;
 import org.apache.pinot.util.TestUtils;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -167,5 +169,37 @@ public class NullHandlingIntegrationTest extends BaseClusterIntegrationTestSet {
       throws Exception {
     String query = "SELECT CASE WHEN description IS NOT NULL THEN 1 ELSE 0 END FROM " + getTableName();
     testQuery(query);
+  }
+
+  @Test
+  public void testCaseWithIsDistinctFrom()
+      throws Exception {
+    String query = "SELECT salary IS DISTINCT FROM salary FROM " + getTableName();
+    testQuery(query);
+    query = "SELECT salary FROM " + getTableName() + " where salary IS DISTINCT FROM salary";
+    testQuery(query);
+  }
+
+  @Test
+  public void testCaseWithIsNotDistinctFrom()
+      throws Exception {
+    String query = "SELECT description IS NOT DISTINCT FROM description FROM " + getTableName();
+    testQuery(query);
+    query = "SELECT description FROM " + getTableName() + " where description IS NOT DISTINCT FROM description";
+    testQuery(query);
+  }
+
+  @Test
+  public void testTotalCountWithNullHandlingQueryOptionEnabled()
+          throws Exception {
+    DataTableBuilderFactory.setDataTableVersion(DataTableFactory.VERSION_4);
+    String pinotQuery = "SELECT COUNT(*) FROM " + getTableName() + " option(enableNullHandling=true)";
+    String h2Query = "SELECT COUNT(*) FROM " + getTableName();
+    testQuery(pinotQuery, h2Query);
+
+    pinotQuery = "SELECT COUNT(1) FROM " + getTableName() + " option(enableNullHandling=true)";
+    h2Query = "SELECT COUNT(1) FROM " + getTableName();
+    testQuery(pinotQuery, h2Query);
+    DataTableBuilderFactory.setDataTableVersion(DataTableBuilderFactory.DEFAULT_VERSION);
   }
 }

@@ -27,11 +27,11 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.httpclient.MultiThreadedHttpConnectionManager;
-import org.apache.helix.ZNRecord;
-import org.apache.helix.manager.zk.ZNRecordSerializer;
 import org.apache.helix.model.ExternalView;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.datamodel.serializer.ZNRecordSerializer;
 import org.apache.pinot.common.exception.InvalidConfigException;
 import org.apache.pinot.common.lineage.SegmentLineage;
 import org.apache.pinot.common.lineage.SegmentLineageAccessHelper;
@@ -75,6 +75,8 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
   private long _lastDisabledTableLogTimestamp = 0;
 
   private TableSizeReader _tableSizeReader;
+
+  private Set<String> _cachedTableNamesWithType = new HashSet<>();
 
   /**
    * Constructs the segment status checker.
@@ -124,6 +126,7 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
       // Remove the metric for this table
       resetTableMetrics(tableNameWithType);
     }
+    context._processedTables.add(tableNameWithType);
   }
 
   @Override
@@ -131,6 +134,12 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
     _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.REALTIME_TABLE_COUNT, context._realTimeTableCount);
     _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.OFFLINE_TABLE_COUNT, context._offlineTableCount);
     _controllerMetrics.setValueOfGlobalGauge(ControllerGauge.DISABLED_TABLE_COUNT, context._disabledTableCount);
+
+    // Remove metrics for tables that are no longer in the cluster
+    _cachedTableNamesWithType.removeAll(context._processedTables);
+    _cachedTableNamesWithType.forEach(this::removeMetricsForTable);
+    _cachedTableNamesWithType.clear();
+    _cachedTableNamesWithType.addAll(context._processedTables);
   }
 
   /**
@@ -143,12 +152,7 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
       _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.REPLICATION_FROM_CONFIG, 0);
       return;
     }
-    int replication;
-    if (tableConfig.getTableType() == TableType.REALTIME) {
-      replication = tableConfig.getValidationConfig().getReplicasPerPartitionNumber();
-    } else {
-      replication = tableConfig.getValidationConfig().getReplicationNumber();
-    }
+    int replication = tableConfig.getReplication();
     _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.REPLICATION_FROM_CONFIG, replication);
   }
 
@@ -294,7 +298,7 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
         (nReplicasIdealMax > 0) ? (nReplicasExternal * 100 / nReplicasIdealMax) : 100);
     _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.SEGMENTS_IN_ERROR_STATE, nErrors);
     _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.PERCENT_SEGMENTS_AVAILABLE,
-        (nSegments > 0) ? (100 - (nOffline * 100 / nSegments)) : 100);
+        (nSegments > 0) ? (nSegments - nOffline) * 100 / nSegments : 100);
     _controllerMetrics.setValueOfTableGauge(tableNameWithType, ControllerGauge.TABLE_COMPRESSED_SIZE,
         tableCompressedSize);
 
@@ -316,19 +320,21 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
 
   @Override
   protected void nonLeaderCleanup(List<String> tableNamesWithType) {
-    for (String tableNameWithType : tableNamesWithType) {
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.NUMBER_OF_REPLICAS);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_OF_REPLICAS);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_SEGMENTS_AVAILABLE);
+    tableNamesWithType.forEach(this::removeMetricsForTable);
+  }
 
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.IDEALSTATE_ZNODE_SIZE);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.IDEALSTATE_ZNODE_BYTE_SIZE);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENT_COUNT);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENT_COUNT_INCLUDING_REPLACED);
+  private void removeMetricsForTable(String tableNameWithType) {
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.NUMBER_OF_REPLICAS);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_OF_REPLICAS);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_SEGMENTS_AVAILABLE);
 
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENTS_IN_ERROR_STATE);
-      _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_SEGMENTS_AVAILABLE);
-    }
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.IDEALSTATE_ZNODE_SIZE);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.IDEALSTATE_ZNODE_BYTE_SIZE);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENT_COUNT);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENT_COUNT_INCLUDING_REPLACED);
+
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.SEGMENTS_IN_ERROR_STATE);
+    _controllerMetrics.removeTableGauge(tableNameWithType, ControllerGauge.PERCENT_SEGMENTS_AVAILABLE);
   }
 
   private void setStatusToDefault() {
@@ -362,5 +368,6 @@ public class SegmentStatusChecker extends ControllerPeriodicTask<SegmentStatusCh
     private int _realTimeTableCount;
     private int _offlineTableCount;
     private int _disabledTableCount;
+    private Set<String> _processedTables = new HashSet<>();
   }
 }

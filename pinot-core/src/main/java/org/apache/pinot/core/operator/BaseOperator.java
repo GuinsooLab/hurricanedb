@@ -32,8 +32,12 @@ public abstract class BaseOperator<T extends Block> implements Operator<T> {
 
   @Override
   public final T nextBlock() {
-    if (Thread.interrupted()) {
-      throw new EarlyTerminationException();
+    /* Worker also checks its corresponding runner thread's interruption periodically, worker will abort if it finds
+       runner's flag is raised. If the runner thread has already acted upon the flag and reset it, then the runner
+       itself will cancel all worker's futures. Therefore, the worker will interrupt even if we only kill the runner
+       thread. */
+    if (Tracing.ThreadAccountantOps.isInterrupted()) {
+      throw new EarlyTerminationException("Interrupted while processing next block");
     }
     try (InvocationScope ignored = Tracing.getTracer().createScope(getClass())) {
       return getNextBlock();

@@ -212,7 +212,7 @@ public class TableConfigSerDeTest {
               new InstanceConstraintConfig(Arrays.asList("constraint1", "constraint2")),
               new InstanceReplicaGroupPartitionConfig(true, 0, 3, 5, 0, 0, false));
       TableConfig tableConfig = tableConfigBuilder.setInstanceAssignmentConfigMap(
-          Collections.singletonMap(InstancePartitionsType.OFFLINE, instanceAssignmentConfig)).build();
+          Collections.singletonMap(InstancePartitionsType.OFFLINE.toString(), instanceAssignmentConfig)).build();
 
       checkInstanceAssignmentConfig(tableConfig);
 
@@ -250,9 +250,7 @@ public class TableConfigSerDeTest {
     }
     {
       // with upsert config
-      UpsertConfig upsertConfig = new UpsertConfig(UpsertConfig.Mode.FULL, null, null, "comparison", HashFunction.NONE);
-
-      TableConfig tableConfig = tableConfigBuilder.setUpsertConfig(upsertConfig).build();
+      TableConfig tableConfig = tableConfigBuilder.setUpsertConfig(new UpsertConfig(UpsertConfig.Mode.FULL)).build();
 
       // Serialize then de-serialize
       checkTableConfigWithUpsertConfig(JsonUtils.stringToObject(tableConfig.toJsonString(), TableConfig.class));
@@ -367,6 +365,7 @@ public class TableConfigSerDeTest {
     assertNull(tableConfig.getRoutingConfig());
     assertNull(tableConfig.getQueryConfig());
     assertNull(tableConfig.getInstanceAssignmentConfigMap());
+    assertNull(tableConfig.getSegmentAssignmentConfigMap());
     assertNull(tableConfig.getFieldConfigList());
 
     // Serialize
@@ -382,6 +381,7 @@ public class TableConfigSerDeTest {
     assertFalse(tableConfigJson.has(TableConfig.ROUTING_CONFIG_KEY));
     assertFalse(tableConfigJson.has(TableConfig.QUERY_CONFIG_KEY));
     assertFalse(tableConfigJson.has(TableConfig.INSTANCE_ASSIGNMENT_CONFIG_MAP_KEY));
+    assertFalse(tableConfigJson.has(TableConfig.SEGMENT_ASSIGNMENT_CONFIG_MAP_KEY));
     assertFalse(tableConfigJson.has(TableConfig.FIELD_CONFIG_LIST_KEY));
   }
 
@@ -488,12 +488,12 @@ public class TableConfigSerDeTest {
   }
 
   private void checkInstanceAssignmentConfig(TableConfig tableConfig) {
-    Map<InstancePartitionsType, InstanceAssignmentConfig> instanceAssignmentConfigMap =
-        tableConfig.getInstanceAssignmentConfigMap();
+    Map<String, InstanceAssignmentConfig> instanceAssignmentConfigMap = tableConfig.getInstanceAssignmentConfigMap();
     assertNotNull(instanceAssignmentConfigMap);
     assertEquals(instanceAssignmentConfigMap.size(), 1);
-    assertTrue(instanceAssignmentConfigMap.containsKey(InstancePartitionsType.OFFLINE));
-    InstanceAssignmentConfig instanceAssignmentConfig = instanceAssignmentConfigMap.get(InstancePartitionsType.OFFLINE);
+    assertTrue(instanceAssignmentConfigMap.containsKey(InstancePartitionsType.OFFLINE.toString()));
+    InstanceAssignmentConfig instanceAssignmentConfig =
+        instanceAssignmentConfigMap.get(InstancePartitionsType.OFFLINE.toString());
 
     InstanceTagPoolConfig tagPoolConfig = instanceAssignmentConfig.getTagPoolConfig();
     assertEquals(tagPoolConfig.getTag(), "tenant_OFFLINE");

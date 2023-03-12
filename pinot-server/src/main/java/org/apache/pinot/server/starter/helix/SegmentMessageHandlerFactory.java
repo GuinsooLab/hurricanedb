@@ -18,12 +18,17 @@
  */
 package org.apache.pinot.server.starter.helix;
 
+import java.util.List;
+import java.util.Set;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.helix.NotificationContext;
 import org.apache.helix.messaging.handling.HelixTaskResult;
 import org.apache.helix.messaging.handling.MessageHandler;
 import org.apache.helix.messaging.handling.MessageHandlerFactory;
 import org.apache.helix.model.Message;
 import org.apache.pinot.common.Utils;
+import org.apache.pinot.common.messages.ForceCommitMessage;
 import org.apache.pinot.common.messages.SegmentRefreshMessage;
 import org.apache.pinot.common.messages.SegmentReloadMessage;
 import org.apache.pinot.common.messages.TableDeletionMessage;
@@ -61,6 +66,8 @@ public class SegmentMessageHandlerFactory implements MessageHandlerFactory {
         return new SegmentReloadMessageHandler(new SegmentReloadMessage(message), _metrics, context);
       case TableDeletionMessage.DELETE_TABLE_MSG_SUB_TYPE:
         return new TableDeletionMessageHandler(new TableDeletionMessage(message), _metrics, context);
+      case ForceCommitMessage.FORCE_COMMIT_MSG_SUB_TYPE:
+        return new ForceCommitMessageHandler(new ForceCommitMessage(message), _metrics, context);
       default:
         LOGGER.warn("Unsupported user defined message sub type: {} for segment: {}", msgSubType,
             message.getPartitionName());
@@ -107,11 +114,13 @@ public class SegmentMessageHandlerFactory implements MessageHandlerFactory {
 
   private class SegmentReloadMessageHandler extends DefaultMessageHandler {
     private final boolean _forceDownload;
+    private final List<String> _segmentList;
 
     SegmentReloadMessageHandler(SegmentReloadMessage segmentReloadMessage, ServerMetrics metrics,
         NotificationContext context) {
       super(segmentReloadMessage, metrics, context);
       _forceDownload = segmentReloadMessage.shouldForceDownload();
+      _segmentList = segmentReloadMessage.getSegmentList();
     }
 
     @Override
@@ -120,20 +129,23 @@ public class SegmentMessageHandlerFactory implements MessageHandlerFactory {
       HelixTaskResult helixTaskResult = new HelixTaskResult();
       _logger.info("Handling message: {}", _message);
       try {
-        if (_segmentName.equals("")) {
-          // NOTE: the method aborts if any segment reload encounters an unhandled exception,
-          // and can lead to inconsistent state across segments.
-          //we don't acquire any permit here as they'll be acquired by worked threads later
-          _instanceDataManager.reloadAllSegments(_tableNameWithType, _forceDownload,
+        if (CollectionUtils.isNotEmpty(_segmentList)) {
+          _instanceDataManager.reloadSegments(_tableNameWithType, _segmentList, _forceDownload,
               _segmentRefreshSemaphore);
-        } else {
-          // Reload one segment
+        } else if (StringUtils.isNotEmpty(_segmentName)) {
+          // TODO: check _segmentName to be backward compatible. Moving forward, we just need to check the list to
+          //       reload one or more segments. If the list or the segment name is empty, all segments are reloaded.
           _segmentRefreshSemaphore.acquireSema(_segmentName, _logger);
           try {
             _instanceDataManager.reloadSegment(_tableNameWithType, _segmentName, _forceDownload);
           } finally {
             _segmentRefreshSemaphore.releaseSema();
           }
+        } else {
+          // NOTE: the method continues if any segment reload encounters an unhandled exception,
+          // and failed segments are logged out in the end. We don't acquire any permit here as they'll be acquired
+          // by worked threads later.
+          _instanceDataManager.reloadAllSegments(_tableNameWithType, _forceDownload, _segmentRefreshSemaphore);
         }
         helixTaskResult.setSuccess(true);
       } catch (Throwable e) {
@@ -160,6 +172,34 @@ public class SegmentMessageHandlerFactory implements MessageHandlerFactory {
       _logger.info("Handling table deletion message");
       try {
         _instanceDataManager.deleteTable(_tableNameWithType);
+        helixTaskResult.setSuccess(true);
+      } catch (Exception e) {
+        _metrics.addMeteredTableValue(_tableNameWithType, ServerMeter.DELETE_TABLE_FAILURES, 1);
+        Utils.rethrowException(e);
+      }
+      return helixTaskResult;
+    }
+  }
+
+  private class ForceCommitMessageHandler extends DefaultMessageHandler {
+
+    private String _tableName;
+    private Set<String> _segmentNames;
+
+    public ForceCommitMessageHandler(ForceCommitMessage forceCommitMessage, ServerMetrics metrics,
+        NotificationContext ctx) {
+      super(forceCommitMessage, metrics, ctx);
+      _tableName = forceCommitMessage.getTableName();
+      _segmentNames = forceCommitMessage.getSegmentNames();
+    }
+
+    @Override
+    public HelixTaskResult handleMessage()
+        throws InterruptedException {
+      HelixTaskResult helixTaskResult = new HelixTaskResult();
+      _logger.info("Handling force commit message for table {} segments {}", _tableName, _segmentNames);
+      try {
+        _instanceDataManager.forceCommit(_tableName, _segmentNames);
         helixTaskResult.setSuccess(true);
       } catch (Exception e) {
         _metrics.addMeteredTableValue(_tableNameWithType, ServerMeter.DELETE_TABLE_FAILURES, 1);

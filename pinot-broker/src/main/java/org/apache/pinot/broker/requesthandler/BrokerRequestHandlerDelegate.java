@@ -19,11 +19,22 @@
 package org.apache.pinot.broker.requesthandler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Map;
+import java.util.concurrent.Executor;
 import javax.annotation.Nullable;
+import org.apache.commons.httpclient.HttpConnectionManager;
 import org.apache.pinot.broker.api.RequesterIdentity;
+import org.apache.pinot.common.exception.QueryException;
+import org.apache.pinot.common.metrics.BrokerMeter;
+import org.apache.pinot.common.metrics.BrokerMetrics;
 import org.apache.pinot.common.response.BrokerResponse;
+import org.apache.pinot.common.response.broker.BrokerResponseNative;
+import org.apache.pinot.common.utils.request.RequestUtils;
 import org.apache.pinot.spi.trace.RequestContext;
 import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.sql.parsers.SqlNodeAndOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -33,20 +44,19 @@ import org.apache.pinot.spi.utils.CommonConstants;
  * {@see: @CommonConstant
  */
 public class BrokerRequestHandlerDelegate implements BrokerRequestHandler {
+  private static final Logger LOGGER = LoggerFactory.getLogger(BrokerRequestHandlerDelegate.class);
 
   private final BrokerRequestHandler _singleStageBrokerRequestHandler;
-  private final MultiStageBrokerRequestHandler _multiStageWorkerRequestHandler;
+  private final BrokerRequestHandler _multiStageBrokerRequestHandler;
+  private final BrokerMetrics _brokerMetrics;
+  private final String _brokerId;
 
-  private final boolean _isMultiStageQueryEngineEnabled;
-
-
-  public BrokerRequestHandlerDelegate(
-      BrokerRequestHandler singleStageBrokerRequestHandler,
-      @Nullable MultiStageBrokerRequestHandler multiStageWorkerRequestHandler
-  ) {
+  public BrokerRequestHandlerDelegate(String brokerId, BrokerRequestHandler singleStageBrokerRequestHandler,
+      @Nullable BrokerRequestHandler multiStageBrokerRequestHandler, BrokerMetrics brokerMetrics) {
+    _brokerId = brokerId;
     _singleStageBrokerRequestHandler = singleStageBrokerRequestHandler;
-    _multiStageWorkerRequestHandler = multiStageWorkerRequestHandler;
-    _isMultiStageQueryEngineEnabled = _multiStageWorkerRequestHandler != null;
+    _multiStageBrokerRequestHandler = multiStageBrokerRequestHandler;
+    _brokerMetrics = brokerMetrics;
   }
 
   @Override
@@ -54,8 +64,8 @@ public class BrokerRequestHandlerDelegate implements BrokerRequestHandler {
     if (_singleStageBrokerRequestHandler != null) {
       _singleStageBrokerRequestHandler.start();
     }
-    if (_multiStageWorkerRequestHandler != null) {
-      _multiStageWorkerRequestHandler.start();
+    if (_multiStageBrokerRequestHandler != null) {
+      _multiStageBrokerRequestHandler.start();
     }
   }
 
@@ -64,21 +74,54 @@ public class BrokerRequestHandlerDelegate implements BrokerRequestHandler {
     if (_singleStageBrokerRequestHandler != null) {
       _singleStageBrokerRequestHandler.shutDown();
     }
-    if (_multiStageWorkerRequestHandler != null) {
-      _multiStageWorkerRequestHandler.shutDown();
+    if (_multiStageBrokerRequestHandler != null) {
+      _multiStageBrokerRequestHandler.shutDown();
     }
   }
 
   @Override
-  public BrokerResponse handleRequest(JsonNode request, @Nullable RequesterIdentity requesterIdentity,
-      RequestContext requestContext)
+  public BrokerResponse handleRequest(JsonNode request, @Nullable SqlNodeAndOptions sqlNodeAndOptions,
+      @Nullable RequesterIdentity requesterIdentity, RequestContext requestContext)
       throws Exception {
-    if (_isMultiStageQueryEngineEnabled && _multiStageWorkerRequestHandler != null) {
-      JsonNode node = request.get(CommonConstants.Broker.Request.QueryOptionKey.USE_MULTISTAGE_ENGINE);
-      if (node != null && node.asBoolean()) {
-        return _multiStageWorkerRequestHandler.handleRequest(request, requesterIdentity, requestContext);
+    requestContext.setBrokerId(_brokerId);
+    if (sqlNodeAndOptions == null) {
+      try {
+        sqlNodeAndOptions = RequestUtils.parseQuery(request.get(CommonConstants.Broker.Request.SQL).asText(), request);
+      } catch (Exception e) {
+        LOGGER.info("Caught exception while compiling SQL: {}, {}", request, e.getMessage());
+        _brokerMetrics.addMeteredGlobalValue(BrokerMeter.REQUEST_COMPILATION_EXCEPTIONS, 1);
+        requestContext.setErrorCode(QueryException.SQL_PARSING_ERROR_CODE);
+        return new BrokerResponseNative(QueryException.getException(QueryException.SQL_PARSING_ERROR, e));
       }
     }
-    return _singleStageBrokerRequestHandler.handleRequest(request, requesterIdentity, requestContext);
+    if (request.has(CommonConstants.Broker.Request.QUERY_OPTIONS)) {
+      sqlNodeAndOptions.setExtraOptions(RequestUtils.getOptionsFromJson(request,
+          CommonConstants.Broker.Request.QUERY_OPTIONS));
+    }
+
+    if (_multiStageBrokerRequestHandler != null && Boolean.parseBoolean(sqlNodeAndOptions.getOptions().get(
+          CommonConstants.Broker.Request.QueryOptionKey.USE_MULTISTAGE_ENGINE))) {
+        return _multiStageBrokerRequestHandler.handleRequest(request, requesterIdentity, requestContext);
+    } else {
+      return _singleStageBrokerRequestHandler.handleRequest(request, sqlNodeAndOptions, requesterIdentity,
+          requestContext);
+    }
+  }
+
+  @Override
+  public Map<Long, String> getRunningQueries() {
+    // TODO: add support for multiStaged engine: track running queries for multiStaged engine and combine its
+    //       running queries with those from singleStaged engine. Both engines share the same request Id generator, so
+    //       the query will have unique ids across the two engines.
+    return _singleStageBrokerRequestHandler.getRunningQueries();
+  }
+
+  @Override
+  public boolean cancelQuery(long queryId, int timeoutMs, Executor executor, HttpConnectionManager connMgr,
+      Map<String, Integer> serverResponses)
+      throws Exception {
+    // TODO: add support for multiStaged engine, basically try to cancel the query on multiStaged engine firstly; if
+    //       not found, try on the singleStaged engine.
+    return _singleStageBrokerRequestHandler.cancelQuery(queryId, timeoutMs, executor, connMgr, serverResponses);
   }
 }

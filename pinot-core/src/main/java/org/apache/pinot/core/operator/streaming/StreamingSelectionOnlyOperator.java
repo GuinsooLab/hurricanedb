@@ -29,16 +29,21 @@ import org.apache.pinot.core.common.Operator;
 import org.apache.pinot.core.common.RowBasedBlockValueFetcher;
 import org.apache.pinot.core.operator.BaseOperator;
 import org.apache.pinot.core.operator.ExecutionStatistics;
-import org.apache.pinot.core.operator.blocks.IntermediateResultsBlock;
 import org.apache.pinot.core.operator.blocks.TransformBlock;
+import org.apache.pinot.core.operator.blocks.results.SelectionResultsBlock;
 import org.apache.pinot.core.operator.transform.TransformOperator;
 import org.apache.pinot.core.operator.transform.TransformResultMetadata;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.IndexSegment;
 
 
-public class StreamingSelectionOnlyOperator extends BaseOperator<IntermediateResultsBlock> {
-
+/**
+ * Streaming only selection operator returns one block at a time not one block per-segment.
+ * This is for efficient streaming of data return on a selection-only situation.
+ *
+ * This optimization doesn't apply to any other combine/merge required operators.
+ */
+public class StreamingSelectionOnlyOperator extends BaseOperator<SelectionResultsBlock> {
   private static final String EXPLAIN_NAME = "SELECT_STREAMING";
 
   private final IndexSegment _indexSegment;
@@ -74,7 +79,7 @@ public class StreamingSelectionOnlyOperator extends BaseOperator<IntermediateRes
 
   @Nullable
   @Override
-  protected IntermediateResultsBlock getNextBlock() {
+  protected SelectionResultsBlock getNextBlock() {
     if (_numDocsScanned >= _limit) {
       // Already returned enough documents
       return null;
@@ -95,9 +100,8 @@ public class StreamingSelectionOnlyOperator extends BaseOperator<IntermediateRes
       rows.add(blockValueFetcher.getRow(i));
     }
     _numDocsScanned += numDocs;
-    return new IntermediateResultsBlock(_dataSchema, rows);
+    return new SelectionResultsBlock(_dataSchema, rows);
   }
-
 
   @Override
   public String toExplainString() {
