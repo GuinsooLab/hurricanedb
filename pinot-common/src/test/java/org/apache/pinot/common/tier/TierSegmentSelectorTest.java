@@ -22,8 +22,8 @@ import com.google.common.collect.Sets;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 import org.apache.helix.HelixManager;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.spi.utils.CommonConstants;
@@ -111,6 +111,30 @@ public class TierSegmentSelectorTest {
 
     // not selected by 5d
     segmentSelector = new TimeBasedTierSegmentSelector(helixManager, "120h");
+    Assert.assertFalse(segmentSelector.selectSegment(tableNameWithType, segmentName));
+  }
+
+  @Test
+  public void testRealTimeConsumingSegmentShouldNotBeRelocated() {
+
+    long now = System.currentTimeMillis();
+
+    String segmentName = "myTable__4__1__" + now;
+    String tableNameWithType = "myTable_REALTIME";
+    SegmentZKMetadata realtimeSegmentZKMetadata = new SegmentZKMetadata(segmentName);
+    realtimeSegmentZKMetadata.setStatus(CommonConstants.Segment.Realtime.Status.IN_PROGRESS);
+
+    ZNRecord segmentZKMetadataZNRecord = realtimeSegmentZKMetadata.toZNRecord();
+
+    ZkHelixPropertyStore<ZNRecord> propertyStore = mock(ZkHelixPropertyStore.class);
+    when(propertyStore
+            .get(eq(ZKMetadataProvider.constructPropertyStorePathForSegment(tableNameWithType, segmentName)), any(),
+                    anyInt())).thenReturn(segmentZKMetadataZNRecord);
+
+    HelixManager helixManager = mock(HelixManager.class);
+    when(helixManager.getHelixPropertyStore()).thenReturn(propertyStore);
+
+    TimeBasedTierSegmentSelector segmentSelector = new TimeBasedTierSegmentSelector(helixManager, "7d");
     Assert.assertFalse(segmentSelector.selectSegment(tableNameWithType, segmentName));
   }
 

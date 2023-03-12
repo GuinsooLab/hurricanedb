@@ -18,8 +18,8 @@
  */
 package org.apache.pinot.broker.broker;
 
-import org.apache.helix.ZNRecord;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.broker.api.AccessControl;
 import org.apache.pinot.spi.env.PinotConfiguration;
 import org.slf4j.Logger;
@@ -31,7 +31,7 @@ public abstract class AccessControlFactory {
   public static final String ACCESS_CONTROL_CLASS_CONFIG = "class";
 
   public void init(PinotConfiguration configuration) {
-  }
+  };
 
   /**
    * Extend original init method inorder to support Zookeeper BasicAuthAccessControlFactory

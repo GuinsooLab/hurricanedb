@@ -21,11 +21,12 @@ package org.apache.pinot.controller.helix.core.retention;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.apache.helix.HelixAdmin;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.metrics.ControllerMetrics;
 import org.apache.pinot.common.utils.LLCSegmentName;
@@ -34,6 +35,7 @@ import org.apache.pinot.controller.LeadControllerManager;
 import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.PinotTableIdealStateBuilder;
 import org.apache.pinot.controller.helix.core.SegmentDeletionManager;
+import org.apache.pinot.core.realtime.impl.fakestream.FakeStreamConfigUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.metrics.PinotMetricUtils;
@@ -75,11 +77,10 @@ public class RetentionManagerTest {
       segmentsZKMetadata.add(segmentZKMetadata);
     }
     final TableConfig tableConfig = createOfflineTableConfig();
-    PinotHelixResourceManager pinotHelixResourceManager = mock(PinotHelixResourceManager.class);
-    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager);
-
     LeadControllerManager leadControllerManager = mock(LeadControllerManager.class);
     when(leadControllerManager.isLeaderForTable(anyString())).thenReturn(true);
+    PinotHelixResourceManager pinotHelixResourceManager = mock(PinotHelixResourceManager.class);
+    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager, leadControllerManager);
 
     when(pinotHelixResourceManager.getTableConfig(OFFLINE_TABLE_NAME)).thenReturn(tableConfig);
     when(pinotHelixResourceManager.getSegmentsZKMetadata(OFFLINE_TABLE_NAME)).thenReturn(segmentsZKMetadata);
@@ -96,7 +97,7 @@ public class RetentionManagerTest {
     SegmentDeletionManager deletionManager = pinotHelixResourceManager.getSegmentDeletionManager();
 
     // Verify that the removeAgedDeletedSegments() method in deletion manager is actually called.
-    verify(deletionManager, times(1)).removeAgedDeletedSegments();
+    verify(deletionManager, times(1)).removeAgedDeletedSegments(leadControllerManager);
 
     // Verify that the deleteSegments method is actually called.
     verify(pinotHelixResourceManager, times(1)).deleteSegments(anyString(), anyList());
@@ -152,12 +153,14 @@ public class RetentionManagerTest {
   }
 
   private TableConfig createRealtimeTableConfig1(int replicaCount) {
+    Map<String, String> streamConfigs = FakeStreamConfigUtils.getDefaultLowLevelStreamConfigs().getStreamConfigsMap();
     return new TableConfigBuilder(TableType.REALTIME).setTableName(TEST_TABLE_NAME).setLLC(true)
-        .setRetentionTimeUnit("DAYS").setRetentionTimeValue("5").setNumReplicas(replicaCount).build();
+        .setStreamConfigs(streamConfigs).setRetentionTimeUnit("DAYS").setRetentionTimeValue("5")
+        .setNumReplicas(replicaCount).build();
   }
 
   private void setupPinotHelixResourceManager(TableConfig tableConfig, final List<String> removedSegments,
-      PinotHelixResourceManager resourceManager) {
+      PinotHelixResourceManager resourceManager, LeadControllerManager leadControllerManager) {
     final String tableNameWithType = tableConfig.getTableName();
     when(resourceManager.getAllTables()).thenReturn(Collections.singletonList(tableNameWithType));
 
@@ -173,7 +176,7 @@ public class RetentionManagerTest {
           throws Throwable {
         return null;
       }
-    }).when(deletionManager).removeAgedDeletedSegments();
+    }).when(deletionManager).removeAgedDeletedSegments(leadControllerManager);
     when(resourceManager.getSegmentDeletionManager()).thenReturn(deletionManager);
 
     // If and when PinotHelixResourceManager.deleteSegments() is invoked, make sure that the segments deleted
@@ -206,12 +209,11 @@ public class RetentionManagerTest {
 
     TableConfig tableConfig = createRealtimeTableConfig1(replicaCount);
     List<String> removedSegments = new ArrayList<>();
-    PinotHelixResourceManager pinotHelixResourceManager =
-        setupSegmentMetadata(tableConfig, now, initialNumSegments, removedSegments);
-    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager);
-
     LeadControllerManager leadControllerManager = mock(LeadControllerManager.class);
     when(leadControllerManager.isLeaderForTable(anyString())).thenReturn(true);
+    PinotHelixResourceManager pinotHelixResourceManager =
+        setupSegmentMetadata(tableConfig, now, initialNumSegments, removedSegments);
+    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager, leadControllerManager);
 
     ControllerConf conf = new ControllerConf();
     ControllerMetrics controllerMetrics = new ControllerMetrics(PinotMetricUtils.getPinotMetricsRegistry());
@@ -225,7 +227,7 @@ public class RetentionManagerTest {
     SegmentDeletionManager deletionManager = pinotHelixResourceManager.getSegmentDeletionManager();
 
     // Verify that the removeAgedDeletedSegments() method in deletion manager is actually called.
-    verify(deletionManager, times(1)).removeAgedDeletedSegments();
+    verify(deletionManager, times(1)).removeAgedDeletedSegments(leadControllerManager);
 
     // Verify that the deleteSegments method is actually called.
     verify(pinotHelixResourceManager, times(1)).deleteSegments(anyString(), anyList());
@@ -233,7 +235,7 @@ public class RetentionManagerTest {
 
   private PinotHelixResourceManager setupSegmentMetadata(TableConfig tableConfig, final long now, final int nSegments,
       List<String> segmentsToBeDeleted) {
-    final int replicaCount = Integer.valueOf(tableConfig.getValidationConfig().getReplicasPerPartition());
+    final int replicaCount = tableConfig.getReplication();
 
     List<SegmentZKMetadata> segmentsZKMetadata = new ArrayList<>();
 

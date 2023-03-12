@@ -21,21 +21,31 @@ package org.apache.pinot.server.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.List;
 import javax.ws.rs.core.Response;
 import org.apache.commons.io.FileUtils;
+import org.apache.pinot.common.restlet.resources.TableMetadataInfo;
 import org.apache.pinot.common.restlet.resources.TableSegments;
 import org.apache.pinot.common.restlet.resources.TablesList;
 import org.apache.pinot.common.utils.TarGzCompressionUtils;
+import org.apache.pinot.segment.local.indexsegment.immutable.ImmutableSegmentImpl;
+import org.apache.pinot.segment.local.upsert.PartitionUpsertMetadataManager;
 import org.apache.pinot.segment.spi.ImmutableSegment;
 import org.apache.pinot.segment.spi.IndexSegment;
 import org.apache.pinot.segment.spi.SegmentMetadata;
 import org.apache.pinot.segment.spi.V1Constants;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
+import org.apache.pinot.segment.spi.index.mutable.ThreadSafeMutableRoaringBitmap;
+import org.apache.pinot.segment.spi.store.ColumnIndexType;
+import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableNameBuilder;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+
+import static org.mockito.Mockito.mock;
 
 
 public class TablesResourceTest extends BaseResourceTest {
@@ -100,6 +110,41 @@ public class TablesResourceTest extends BaseResourceTest {
   }
 
   @Test
+  public void getTableMetadata()
+      throws Exception {
+    for (TableType tableType : TableType.values()) {
+      String tableMetadataPath = "/tables/" + TableNameBuilder.forType(tableType).tableNameWithType(TABLE_NAME)
+          + "/metadata";
+
+      JsonNode jsonResponse =
+          JsonUtils.stringToJsonNode(_webTarget.path(tableMetadataPath).request().get(String.class));
+      TableMetadataInfo metadataInfo = JsonUtils.jsonNodeToObject(jsonResponse, TableMetadataInfo.class);
+      Assert.assertNotNull(metadataInfo);
+      Assert.assertEquals(metadataInfo.getTableName(), TableNameBuilder.forType(tableType)
+          .tableNameWithType(TABLE_NAME));
+      Assert.assertEquals(metadataInfo.getColumnLengthMap().size(), 0);
+      Assert.assertEquals(metadataInfo.getColumnCardinalityMap().size(), 0);
+      Assert.assertEquals(metadataInfo.getColumnIndexSizeMap().size(), 0);
+
+      jsonResponse = JsonUtils.stringToJsonNode(_webTarget.path(tableMetadataPath)
+          .queryParam("columns", "column1").queryParam("columns", "column2").request().get(String.class));
+      metadataInfo = JsonUtils.jsonNodeToObject(jsonResponse, TableMetadataInfo.class);
+      Assert.assertEquals(metadataInfo.getColumnLengthMap().size(), 2);
+      Assert.assertEquals(metadataInfo.getColumnCardinalityMap().size(), 2);
+      Assert.assertEquals(metadataInfo.getColumnIndexSizeMap().size(), 2);
+      Assert.assertTrue(metadataInfo.getColumnIndexSizeMap().get("column1")
+          .containsKey(ColumnIndexType.DICTIONARY.getIndexName()));
+      Assert.assertTrue(metadataInfo.getColumnIndexSizeMap().get("column2")
+          .containsKey(ColumnIndexType.FORWARD_INDEX.getIndexName()));
+    }
+
+    // No such table
+    Response response = _webTarget.path("/tables/noSuchTable/metadata").request().get(Response.class);
+    Assert.assertNotNull(response);
+    Assert.assertEquals(response.getStatus(), Response.Status.NOT_FOUND.getStatusCode());
+  }
+
+  @Test
   public void testSegmentMetadata()
       throws Exception {
     IndexSegment defaultSegment = _realtimeIndexSegments.get(0);
@@ -124,6 +169,8 @@ public class TablesResourceTest extends BaseResourceTest {
             .get(String.class));
     Assert.assertEquals(jsonResponse.get("columns").size(), 2);
     Assert.assertEquals(jsonResponse.get("indexes").size(), 2);
+    Assert.assertNotNull(jsonResponse.get("columns").get(0).get("indexSizeMap"));
+    Assert.assertNotNull(jsonResponse.get("columns").get(1).get("indexSizeMap"));
 
     jsonResponse = JsonUtils.stringToJsonNode(
         (_webTarget.path(segmentMetadataPath).queryParam("columns", "*").request().get(String.class)));
@@ -182,6 +229,24 @@ public class TablesResourceTest extends BaseResourceTest {
     Assert.assertEquals(response.getStatus(), Response.Status.NOT_FOUND.getStatusCode());
   }
 
+  @Test
+  public void testDownloadValidDocIdsSnapshot()
+      throws Exception {
+    // Verify the content of the downloaded snapshot from a realtime table.
+    downLoadAndVerifyValidDocIdsSnapshot(TableNameBuilder.REALTIME.tableNameWithType(TABLE_NAME),
+        (ImmutableSegmentImpl) _realtimeIndexSegments.get(0));
+
+    // Verify non-existent table and segment download return NOT_FOUND status.
+    Response response = _webTarget.path("/tables/UNKNOWN_REALTIME/segments/segmentname/validDocIds").request()
+        .get(Response.class);
+    Assert.assertEquals(response.getStatus(), Response.Status.NOT_FOUND.getStatusCode());
+
+    response = _webTarget.path(
+        String.format("/tables/%s/segments/%s/validDocIds", TableNameBuilder.REALTIME.tableNameWithType(TABLE_NAME),
+            "UNKNOWN_SEGMENT")).request().get(Response.class);
+    Assert.assertEquals(response.getStatus(), Response.Status.NOT_FOUND.getStatusCode());
+  }
+
   // Verify metadata file from segments.
   private void downLoadAndVerifySegmentContent(String tableNameWithType, IndexSegment segment)
       throws IOException {
@@ -208,6 +273,31 @@ public class TablesResourceTest extends BaseResourceTest {
     Assert.assertEquals(metadata.getTableName(), TableNameBuilder.extractRawTableName(tableNameWithType));
 
     FileUtils.forceDelete(tempMetadataDir);
+  }
+
+  // Verify metadata file from segments.
+  private void downLoadAndVerifyValidDocIdsSnapshot(String tableNameWithType, ImmutableSegmentImpl segment)
+      throws IOException {
+
+    String snapshotPath = "/segments/" + tableNameWithType + "/" + segment.getSegmentName() + "/validDocIds";
+
+    PartitionUpsertMetadataManager upsertMetadataManager = mock(PartitionUpsertMetadataManager.class);
+    ThreadSafeMutableRoaringBitmap validDocIds = new ThreadSafeMutableRoaringBitmap();
+    int[] docIds = new int[]{1, 4, 6, 10, 15, 17, 18, 20};
+    for (int docId: docIds) {
+      validDocIds.add(docId);
+    }
+    segment.enableUpsert(upsertMetadataManager, validDocIds);
+
+    // Download the snapshot in byte[] format.
+    Response response = _webTarget.path(snapshotPath).request().get(Response.class);
+    Assert.assertEquals(response.getStatus(), Response.Status.OK.getStatusCode());
+    byte[] snapshot = response.readEntity(byte[].class);
+
+    // Load the snapshot file.
+    Assert.assertNotNull(snapshot);
+    Assert.assertEquals(new ImmutableRoaringBitmap(ByteBuffer.wrap(snapshot)).toMutableRoaringBitmap(),
+        validDocIds.getMutableRoaringBitmap());
   }
 
   @Test

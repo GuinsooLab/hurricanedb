@@ -18,40 +18,29 @@
  */
 package org.apache.pinot.segment.local.upsert;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import javax.annotation.Nullable;
+import java.io.Closeable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.pinot.common.metrics.ServerMetrics;
-import org.apache.pinot.spi.config.table.HashFunction;
+import org.apache.pinot.segment.local.data.manager.TableDataManager;
+import org.apache.pinot.spi.config.table.TableConfig;
+import org.apache.pinot.spi.config.table.UpsertConfig;
+import org.apache.pinot.spi.data.Schema;
 
 
 /**
  * The manager of the upsert metadata of a table.
  */
 @ThreadSafe
-public class TableUpsertMetadataManager {
-  private final Map<Integer, PartitionUpsertMetadataManager> _partitionMetadataManagerMap = new ConcurrentHashMap<>();
-  private final String _tableNameWithType;
-  private final ServerMetrics _serverMetrics;
-  private final PartialUpsertHandler _partialUpsertHandler;
-  private final HashFunction _hashFunction;
+public interface TableUpsertMetadataManager extends Closeable {
 
-  public TableUpsertMetadataManager(String tableNameWithType, ServerMetrics serverMetrics,
-      @Nullable PartialUpsertHandler partialUpsertHandler, HashFunction hashFunction) {
-    _tableNameWithType = tableNameWithType;
-    _serverMetrics = serverMetrics;
-    _partialUpsertHandler = partialUpsertHandler;
-    _hashFunction = hashFunction;
-  }
+  void init(TableConfig tableConfig, Schema schema, TableDataManager tableDataManager, ServerMetrics serverMetrics);
 
-  public PartitionUpsertMetadataManager getOrCreatePartitionManager(int partitionId) {
-    return _partitionMetadataManagerMap.computeIfAbsent(partitionId,
-        k -> new PartitionUpsertMetadataManager(_tableNameWithType, k, _serverMetrics, _partialUpsertHandler,
-            _hashFunction));
-  }
+  PartitionUpsertMetadataManager getOrCreatePartitionManager(int partitionId);
 
-  public boolean isPartialUpsertEnabled() {
-    return _partialUpsertHandler != null;
-  }
+  UpsertConfig.Mode getUpsertMode();
+
+  /**
+   * Stops the metadata manager. After invoking this method, no access to the metadata will be accepted.
+   */
+  void stop();
 }

@@ -18,9 +18,11 @@
  */
 package org.apache.pinot.query.planner.stage;
 
+import java.util.Arrays;
 import java.util.List;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.pinot.common.utils.DataSchema;
+import org.apache.pinot.query.planner.logical.RexExpression;
 import org.apache.pinot.query.planner.partitioning.FieldSelectionKeySelector;
 import org.apache.pinot.query.planner.partitioning.KeySelector;
 import org.apache.pinot.query.planner.serde.ProtoProperties;
@@ -30,36 +32,68 @@ public class JoinNode extends AbstractStageNode {
   @ProtoProperties
   private JoinRelType _joinRelType;
   @ProtoProperties
-  private List<JoinClause> _criteria;
+  private JoinKeys _joinKeys;
+  @ProtoProperties
+  private List<RexExpression> _joinClause;
+  @ProtoProperties
+  private List<String> _leftColumnNames;
+  @ProtoProperties
+  private List<String> _rightColumnNames;
 
   public JoinNode(int stageId) {
     super(stageId);
   }
 
-  public JoinNode(int stageId, DataSchema dataSchema, JoinRelType joinRelType, List<JoinClause> criteria) {
+  public JoinNode(int stageId, DataSchema dataSchema, DataSchema leftSchema, DataSchema rightSchema,
+      JoinRelType joinRelType, JoinKeys joinKeys, List<RexExpression> joinClause) {
     super(stageId, dataSchema);
+    _leftColumnNames = Arrays.asList(leftSchema.getColumnNames());
+    _rightColumnNames = Arrays.asList(rightSchema.getColumnNames());
     _joinRelType = joinRelType;
-    _criteria = criteria;
+    _joinKeys = joinKeys;
+    _joinClause = joinClause;
   }
 
   public JoinRelType getJoinRelType() {
     return _joinRelType;
   }
 
-  public List<JoinClause> getCriteria() {
-    return _criteria;
+  public JoinKeys getJoinKeys() {
+    return _joinKeys;
   }
 
-  public static class JoinClause {
+  public List<RexExpression> getJoinClauses() {
+    return _joinClause;
+  }
+
+  public List<String> getLeftColumnNames() {
+    return _leftColumnNames;
+  }
+
+  public List<String> getRightColumnNames() {
+    return _rightColumnNames;
+  }
+
+  @Override
+  public String explain() {
+    return "JOIN";
+  }
+
+  @Override
+  public <T, C> T visit(StageNodeVisitor<T, C> visitor, C context) {
+    return visitor.visitJoin(this, context);
+  }
+
+  public static class JoinKeys {
     @ProtoProperties
     private KeySelector<Object[], Object[]> _leftJoinKeySelector;
     @ProtoProperties
     private KeySelector<Object[], Object[]> _rightJoinKeySelector;
 
-    public JoinClause() {
+    public JoinKeys() {
     }
 
-    public JoinClause(FieldSelectionKeySelector leftKeySelector, FieldSelectionKeySelector rightKeySelector) {
+    public JoinKeys(FieldSelectionKeySelector leftKeySelector, FieldSelectionKeySelector rightKeySelector) {
       _leftJoinKeySelector = leftKeySelector;
       _rightJoinKeySelector = rightKeySelector;
     }

@@ -31,13 +31,14 @@ import static org.testng.Assert.assertTrue;
 
 @SuppressWarnings("rawtypes")
 public class AggregationFunctionFactoryTest {
-  private static final String ARGUMENT = "(column)";
+  private static final String ARGUMENT_COLUMN = "(column)";
+  private static final String ARGUMENT_STAR = "(*)";
   private static final QueryContext DUMMY_QUERY_CONTEXT =
       QueryContextConverterUtils.getQueryContext("SELECT * FROM testTable");
 
   @Test
   public void testGetAggregationFunction() {
-    FunctionContext function = getFunction("CoUnT");
+    FunctionContext function = getFunction("CoUnT", ARGUMENT_STAR);
     AggregationFunction aggregationFunction =
         AggregationFunctionFactory.getAggregationFunction(function, DUMMY_QUERY_CONTEXT);
     assertTrue(aggregationFunction instanceof CountAggregationFunction);
@@ -443,10 +444,38 @@ public class AggregationFunctionFactoryTest {
     assertEquals(aggregationFunction.getType(), AggregationFunctionType.PERCENTILETDIGESTMV);
     assertEquals(aggregationFunction.getColumnName(), "percentileTDigest95.0MV_column");
     assertEquals(aggregationFunction.getResultColumnName(), "percentiletdigestmv(column, 95.0)");
+
+    function = getFunction("bool_and");
+    aggregationFunction = AggregationFunctionFactory.getAggregationFunction(function, DUMMY_QUERY_CONTEXT);
+    assertTrue(aggregationFunction instanceof BooleanAndAggregationFunction);
+    assertEquals(aggregationFunction.getType(), AggregationFunctionType.BOOLAND);
+    assertEquals(aggregationFunction.getColumnName(), "boolAnd_column");
+    assertEquals(aggregationFunction.getResultColumnName(), "booland(column)");
+
+    function = getFunction("bool_or");
+    aggregationFunction = AggregationFunctionFactory.getAggregationFunction(function, DUMMY_QUERY_CONTEXT);
+    assertTrue(aggregationFunction instanceof BooleanOrAggregationFunction);
+    assertEquals(aggregationFunction.getType(), AggregationFunctionType.BOOLOR);
+    assertEquals(aggregationFunction.getColumnName(), "boolOr_column");
+    assertEquals(aggregationFunction.getResultColumnName(), "boolor(column)");
+
+    function = getFunction("skewness");
+    aggregationFunction = AggregationFunctionFactory.getAggregationFunction(function, DUMMY_QUERY_CONTEXT);
+    assertTrue(aggregationFunction instanceof FourthMomentAggregationFunction);
+    assertEquals(aggregationFunction.getType(), AggregationFunctionType.SKEWNESS);
+    assertEquals(aggregationFunction.getColumnName(), "skewness_column");
+    assertEquals(aggregationFunction.getResultColumnName(), "skewness(column)");
+
+    function = getFunction("kurtosis");
+    aggregationFunction = AggregationFunctionFactory.getAggregationFunction(function, DUMMY_QUERY_CONTEXT);
+    assertTrue(aggregationFunction instanceof FourthMomentAggregationFunction);
+    assertEquals(aggregationFunction.getType(), AggregationFunctionType.KURTOSIS);
+    assertEquals(aggregationFunction.getColumnName(), "kurtosis_column");
+    assertEquals(aggregationFunction.getResultColumnName(), "kurtosis(column)");
   }
 
   private FunctionContext getFunction(String functionName) {
-    return getFunction(functionName, ARGUMENT);
+    return getFunction(functionName, ARGUMENT_COLUMN);
   }
 
   private FunctionContext getFunction(String functionName, String args) {

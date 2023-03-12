@@ -39,15 +39,16 @@ import org.testng.annotations.Test;
 
 
 public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
-  private final File _dataFile = new File(_tempDir, "data.parquet");
   private final File _testParquetFileWithInt96AndDecimal =
       new File(getClass().getClassLoader().getResource("test-file-with-int96-and-decimal.snappy.parquet").getFile());
 
+  private static final int NUM_RECORDS_TEST_PARQUET_WITH_INT96 = 1965;
+
   @Override
-  protected RecordReader createRecordReader()
+  protected RecordReader createRecordReader(File file)
       throws Exception {
     ParquetRecordReader recordReader = new ParquetRecordReader();
-    recordReader.init(_dataFile, _sourceFields, null);
+    recordReader.init(file, _sourceFields, null);
     return recordReader;
   }
 
@@ -63,12 +64,17 @@ public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
       }
       records.add(record);
     }
-    try (ParquetWriter<GenericRecord> writer = ParquetUtils
-        .getParquetAvroWriter(new Path(_dataFile.getAbsolutePath()), schema)) {
+    try (ParquetWriter<GenericRecord> writer = ParquetUtils.getParquetAvroWriter(new Path(_dataFile.getAbsolutePath()),
+        schema)) {
       for (GenericRecord record : records) {
         writer.write(record);
       }
     }
+  }
+
+  @Override
+  protected String getDataFileName() {
+    return "data.parquet";
   }
 
   @Test
@@ -100,6 +106,22 @@ public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
   }
 
   @Test
+  public void testFileMetadataParsing()
+      throws IOException {
+    final ParquetRecordReader parquetRecordReader = new ParquetRecordReader();
+    File avroParquetFile = new File(getClass().getClassLoader().getResource("data-avro.parquet").getFile());
+    parquetRecordReader.init(avroParquetFile, null, null);
+    // Should be avro since file metadata has avro schema
+    Assert.assertTrue(parquetRecordReader.useAvroParquetRecordReader());
+
+    final ParquetRecordReader parquetRecordReader2 = new ParquetRecordReader();
+    File nativeParquetFile = new File(getClass().getClassLoader().getResource("users.parquet").getFile());
+    parquetRecordReader2.init(nativeParquetFile, null, null);
+    // Should be native since file metadata does not have avro schema
+    Assert.assertFalse(parquetRecordReader2.useAvroParquetRecordReader());
+  }
+
+  @Test
   public void testComparison()
       throws IOException {
     testComparison(_dataFile, SAMPLE_RECORDS_SIZE);
@@ -116,10 +138,12 @@ public class ParquetRecordReaderTest extends AbstractRecordReaderTest {
   private void testComparison(File dataFile, int totalRecords)
       throws IOException {
     final ParquetRecordReader avroRecordReader = new ParquetRecordReader();
-    avroRecordReader.init(dataFile, null, null);
+    ParquetRecordReaderConfig avroRecordReaderConfig = new ParquetRecordReaderConfig();
+    avroRecordReaderConfig.setUseParquetAvroRecordReader(true);
+    avroRecordReader.init(dataFile, null, avroRecordReaderConfig);
     final ParquetRecordReader nativeRecordReader = new ParquetRecordReader();
     ParquetRecordReaderConfig parquetRecordReaderConfig = new ParquetRecordReaderConfig();
-    parquetRecordReaderConfig.setUseParquetAvroRecordReader(false);
+    parquetRecordReaderConfig.setUseParquetNativeRecordReader(true);
     nativeRecordReader.init(dataFile, null, parquetRecordReaderConfig);
     Assert.assertTrue(avroRecordReader.useAvroParquetRecordReader());
     Assert.assertFalse(nativeRecordReader.useAvroParquetRecordReader());

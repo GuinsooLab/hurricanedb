@@ -31,6 +31,7 @@ import {
   getPeriodicTaskNames,
   getTaskTypes,
   getTaskTypeDebug,
+  getTables,
   getTaskTypeTasks,
   getTaskTypeState,
   stopTasks,
@@ -43,6 +44,7 @@ import {
   getMinionMeta,
   getTasks,
   getTaskDebug,
+  getTaskGeneratorDebug,
   updateInstanceTags,
   getClusterConfig,
   getQueryTables,
@@ -55,6 +57,7 @@ import {
   getTenantTableDetails,
   getSegmentMetadata,
   reloadSegment,
+  getTableJobs,
   getClusterInfo,
   zookeeperGetList,
   zookeeperGetData,
@@ -87,10 +90,15 @@ import {
   requestUserList,
   requestAddUser,
   requestDeleteUser,
-  requestUpdateUser
+  requestUpdateUser,
+  getTaskProgress,
+  getSegmentReloadStatus,
+  getTaskRuntimeConfig
 } from '../requests';
 import { baseApi } from './axios-config';
-import Utils from './Utils';
+import Utils, { getDisplaySegmentStatus } from './Utils';
+import { matchPath } from 'react-router';
+import RouterData from '../router';
 const JSONbig = require('json-bigint')({'storeAsString': true})
 
 // This method is used to display tenants listing on cluster manager home page
@@ -151,7 +159,7 @@ const getAllInstances = () => {
 };
 
 // This method is used to display instance data on cluster manager home page
-// API: /instances/:instaneName
+// API: /instances/:instanceName
 // Expected Output: {columns: [], records: []}
 const getInstanceData = (instances, liveInstanceArr) => {
   const promiseArr = [...instances.map((inst) => getInstance(inst))];
@@ -254,7 +262,7 @@ const getAsObject = (str: SQLResult) => {
 // This method is used to display query output in tabular format as well as JSON format on query page
 // API: /:urlName (Eg: sql or pql)
 // Expected Output: {columns: [], records: []}
-const getQueryResults = (params, checkedOptions) => {
+const getQueryResults = (params) => {
   return getQueryResult(params).then(({ data }) => {
     let queryResponse = getAsObject(data);
 
@@ -264,54 +272,17 @@ const getQueryResults = (params, checkedOptions) => {
     // if sql api throws error, handle here
     if(typeof queryResponse === 'string'){
       errorStr = queryResponse;
-    } else if (queryResponse && queryResponse.exceptions && queryResponse.exceptions.length) {
-      errorStr = JSON.stringify(queryResponse.exceptions, null, 2);
-    } else
-    {
-      if (checkedOptions.querySyntaxPQL === true)
-      {
-        if (queryResponse)
-        {
-          if (queryResponse.selectionResults)
-          {
-            // Selection query
-            columnList = queryResponse.selectionResults.columns;
-            dataArray = queryResponse.selectionResults.results;
-          }
-          else if (!queryResponse.aggregationResults[0]?.groupByResult)
-          {
-            // Simple aggregation query
-            columnList = map(queryResponse.aggregationResults, (aggregationResult) => {
-              return {title: aggregationResult.function};
-            });
-
-            dataArray.push(map(queryResponse.aggregationResults, (aggregationResult) => {
-              return aggregationResult.value;
-            }));
-          }
-          else if (queryResponse.aggregationResults[0]?.groupByResult)
-          {
-            // Aggregation group by query
-            // TODO - Revisit
-            const columns = queryResponse.aggregationResults[0].groupByColumns;
-            columns.push(queryResponse.aggregationResults[0].function);
-            columnList = map(columns, (columnName) => {
-              return columnName;
-            });
-
-            dataArray = map(queryResponse.aggregationResults[0].groupByResult, (aggregationGroup) => {
-              const row = aggregationGroup.group;
-              row.push(aggregationGroup.value);
-              return row;
-            });
-          }
-        }
+    } 
+    if (queryResponse && queryResponse.exceptions && queryResponse.exceptions.length) {
+      try{
+        errorStr = JSON.stringify(queryResponse.exceptions, null, 2);
+      } catch {
+        errorStr = "";
       }
-      else if (queryResponse.resultTable?.dataSchema?.columnNames?.length)
-      {
-        columnList = queryResponse.resultTable.dataSchema.columnNames;
-        dataArray = queryResponse.resultTable.rows;
-      }
+    } 
+    if (queryResponse.resultTable?.dataSchema?.columnNames?.length) {
+      columnList = queryResponse.resultTable.dataSchema.columnNames;
+      dataArray = queryResponse.resultTable.rows;
     }
 
     const columnStats = ['timeUsedMs',
@@ -385,12 +356,28 @@ const getSchemaObject = async (schemaName) =>{
       return schemaObj;
   }
 
-const getAllSchemaDetails = async () => {
-  const columnHeaders = ["Schema Name", "Dimension Columns", "Date-Time Columns", "Metrics Columns", "Total Columns"]
+// This method is used to display schema listing on the tables listing page
+// API: /schemas
+// Expected Output: {columns: [], records: []}
+const getListingSchemaList = () => {
+  return getSchemaList().then((results) => {
+    const responseObj = {
+      columns: ['Schemas'],
+      records: []
+    };
+    results.data.forEach((result)=>{
+      responseObj.records.push([result]);
+    });
+    return responseObj;
+  })
+};
+
+const allSchemaDetailsColumnHeader = ["Schema Name", "Dimension Columns", "Date-Time Columns", "Metrics Columns", "Total Columns"];
+
+const getAllSchemaDetails = async (schemaList) => {
   let schemaDetails:Array<any> = [];
   let promiseArr = [];
-  const {data} = await getSchemaList()
-  promiseArr = data.map(async (o)=>{
+  promiseArr = schemaList.map(async (o)=>{
     return await getSchema(o);
   });
   const results = await Promise.all(promiseArr);
@@ -404,19 +391,20 @@ const getAllSchemaDetails = async () => {
     return schemaObj;
   })
   return {
-    columns: columnHeaders,
+    columns: allSchemaDetailsColumnHeader,
     records: schemaDetails
   };
 }
 
+const allTableDetailsColumnHeader = [
+  'Table Name',
+  'Reported Size',
+  'Estimated Size',
+  'Number of Segments',
+  'Status',
+];
+
 const getAllTableDetails = (tablesList) => {
-  const columnHeaders = [
-    'Table Name',
-    'Reported Size',
-    'Estimated Size',
-    'Number of Segments',
-    'Status',
-  ];
   if (tablesList.length) {
     const promiseArr = [];
     tablesList.map((name) => {
@@ -466,13 +454,13 @@ const getAllTableDetails = (tablesList) => {
         }
       });
       return {
-        columns: columnHeaders,
+        columns: allTableDetailsColumnHeader,
         records: finalRecordsArr,
       };
     });
   }
   return {
-    columns: columnHeaders,
+    columns: allTableDetailsColumnHeader,
     records: []
   };
 };
@@ -508,7 +496,7 @@ const getSegmentList = (tableName) => {
       records: Object.keys(idealStateObj).map((key) => {
         return [
           key,
-          getSegmentStatus(idealStateObj[key], externalViewObj[key])
+          getDisplaySegmentStatus(idealStateObj[key], externalViewObj[key])
         ];
       }),
       externalViewObj
@@ -589,6 +577,7 @@ const getSegmentDetails = (tableName, segmentName) => {
     const segmentMetaDataJson = { ...segmentMetaData }
     delete segmentMetaDataJson.indexes
     delete segmentMetaDataJson.columns
+    const indexes = get(segmentMetaData, 'indexes', {})
 
     return {
       replicaSet: {
@@ -597,7 +586,7 @@ const getSegmentDetails = (tableName, segmentName) => {
       },
       indexes: {
         columns: ['Field Name', 'Bloom Filter', 'Dictionary', 'Forward Index', 'Sorted', 'Inverted Index', 'JSON Index', 'Null Value Vector Reader', 'Range Index'],
-        records: Object.keys(segmentMetaData.indexes).map(fieldName => [
+        records: Object.keys(indexes).map(fieldName => [
           fieldName,
           segmentMetaData.indexes[fieldName]["bloom-filter"] === "YES",
           segmentMetaData.indexes[fieldName]["dictionary"] === "YES",
@@ -835,7 +824,7 @@ const getElapsedTime = (startTime) => {
 
 const getTasksList = async (tableName, taskType) => {
   const finalResponse = {
-    columns: ['Task ID', 'Status', 'Start Time', 'Elapsed Time', 'Finish Time', 'Num of Sub Tasks'],
+    columns: ['Task ID', 'Status', 'Start Time', 'Finish Time', 'Num of Sub Tasks'],
     records: []
   }
   await new Promise((resolve, reject) => {
@@ -843,13 +832,11 @@ const getTasksList = async (tableName, taskType) => {
       const promiseArr = [];
       const fetchInfo = async (taskID, status) => {
         const debugData = await getTaskDebugData(taskID);
-        const startTime = moment(get(debugData, 'data.subtaskInfos.0.startTime'), 'YYYY-MM-DD hh:mm:ss');
         finalResponse.records.push([
           taskID,
           status,
-          get(debugData, 'data.subtaskInfos.0.startTime'),
-          startTime ? getElapsedTime(startTime) : '',
-          get(debugData, 'data.subtaskInfos.0.finishTime', ''),
+          get(debugData, 'data.startTime', ''),
+          get(debugData, 'data.finishTime', ''),
           get(debugData, 'data.subtaskCount.total', 0)
         ]);
       };
@@ -863,8 +850,25 @@ const getTasksList = async (tableName, taskType) => {
   return finalResponse;
 };
 
+const getTaskRuntimeConfigData = async (taskName: string) => {
+  const response = await getTaskRuntimeConfig(taskName);
+  
+  return response.data;
+}
+
 const getTaskDebugData = async (taskName) => {
   const debugRes = await getTaskDebug(taskName);
+  return debugRes;
+};
+
+const getTaskProgressData = async (taskName, subTaskName) => {
+  const progressData = await getTaskProgress(taskName, subTaskName);
+
+  return progressData.data;
+}
+
+const getTaskGeneratorDebugData = async (taskName, taskType) => {
+  const debugRes = await getTaskGeneratorDebug(taskName, taskType);
   return debugRes;
 };
 
@@ -892,14 +896,26 @@ const deleteSegmentOp = (tableName, segmentName) => {
   });
 };
 
+const fetchTableJobs = async (tableName: string, jobTypes?: string) => {
+  const response = await getTableJobs(tableName, jobTypes);
+  
+  return response.data;
+}
+
+const fetchSegmentReloadStatus = async (jobId: string) => {
+  const response = await getSegmentReloadStatus(jobId);
+  
+  return response.data;
+}
+
 const updateTable = (tableName: string, table: string) => {
   return putTable(tableName, table).then((res)=>{
     return res.data;
   })
 };
 
-const updateSchema = (schemaName: string, schema: string) => {
-  return putSchema(schemaName, schema).then((res)=>{
+const updateSchema = (schemaName: string, schema: string, reload?: boolean) => {
+  return putSchema(schemaName, schema, reload).then((res)=>{
     return res.data;
   })
 };
@@ -995,6 +1011,37 @@ const getAccessTokenFromHashParams = () => {
   return accessToken;
 };
 
+
+// validates app redirect path with known routes
+const validateRedirectPath = (path: string): boolean => {
+  if(!path) {
+    return false;
+  }
+
+  if(!path.startsWith("/")) {
+    path = "/" + path;
+  }
+
+  let pathName = "";
+
+  try {
+    const appUrl = new URL(location.origin + path);
+    pathName = appUrl.pathname;
+  } catch(err) {
+    console.error(err);
+    return false;
+  }
+
+  const knownAppRoutes = RouterData.map((data) => data.path);
+  const routeMatches = matchPath(pathName, {path: knownAppRoutes, exact: true});
+  
+  if(!routeMatches) {
+    return false;
+  }
+
+  return true;
+};
+
 const getURLWithoutAccessToken = (fallbackUrl = '/'): string => {
   let prefix = '';
   let url = location.hash.substring(1);
@@ -1026,6 +1073,12 @@ const getURLWithoutAccessToken = (fallbackUrl = '/'): string => {
     }
     
     url = urlParams.join('&');
+
+    if(!validateRedirectPath(url)) {
+      // constructed redirect url is not a valid app route
+      // redirect to fallBackUrl
+      url = fallbackUrl;
+    }
   } else {
     url = fallbackUrl;
   }
@@ -1040,6 +1093,12 @@ const getTable = ()=>{
 
 const getTaskTypeDebugData = (taskType)=>{
   return getTaskTypeDebug(taskType).then(response=>{
+    return response.data;
+  })
+};
+
+const getTableData = (params)=>{
+  return getTables(params).then(response=>{
     return response.data;
   })
 };
@@ -1096,6 +1155,7 @@ export default {
   getTableSchemaData,
   getQueryResults,
   getTenantTableData,
+  allTableDetailsColumnHeader,
   getAllTableDetails,
   getTableSummaryData,
   getSegmentList,
@@ -1120,7 +1180,11 @@ export default {
   deleteInstance,
   getAllPeriodicTaskNames,
   getAllTaskTypes,
+  fetchTableJobs,
+  fetchSegmentReloadStatus,
   getTaskTypeDebugData,
+  getTableData,
+  getTaskRuntimeConfigData,
   getTaskInfo,
   stopAllTasks,
   resumeAllTasks,
@@ -1133,6 +1197,8 @@ export default {
   getElapsedTime,
   getTasksList,
   getTaskDebugData,
+  getTaskProgressData,
+  getTaskGeneratorDebugData,
   deleteSegmentOp,
   reloadSegmentOp,
   reloadStatusOp,
@@ -1148,6 +1214,8 @@ export default {
   saveSchemaAction,
   saveTableAction,
   getSchemaData,
+  getQuerySchemaList: getListingSchemaList,
+  allSchemaDetailsColumnHeader,
   getAllSchemaDetails,
   getTableState,
   getAuthInfo,

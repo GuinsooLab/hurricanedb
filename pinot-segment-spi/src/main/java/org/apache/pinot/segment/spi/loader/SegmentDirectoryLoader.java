@@ -34,4 +34,21 @@ public interface SegmentDirectoryLoader {
    */
   SegmentDirectory load(URI indexDir, SegmentDirectoryLoaderContext segmentDirectoryLoaderContext)
       throws Exception;
+
+  /**
+   * Clean up the segment data from the server.
+   * @param segmentDirectoryLoaderContext context for cleaning up segment data
+   */
+  default void delete(SegmentDirectoryLoaderContext segmentDirectoryLoaderContext)
+      throws Exception {
+  }
+
+  /**
+   * Based on the zkMetadata's and current segment tier, checks whether or not tier migration is needed
+   * @param targetTier segment's ZKMetadata's tier
+   * @param currentTier Current segment tier
+   */
+  default boolean needsTierMigration(String targetTier, String currentTier) {
+    return false;
+  }
 }

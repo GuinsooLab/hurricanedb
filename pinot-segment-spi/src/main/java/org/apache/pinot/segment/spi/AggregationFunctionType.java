@@ -49,6 +49,8 @@ public enum AggregationFunctionType {
   FASTHLL("fastHLL"),
   DISTINCTCOUNTTHETASKETCH("distinctCountThetaSketch"),
   DISTINCTCOUNTRAWTHETASKETCH("distinctCountRawThetaSketch"),
+  DISTINCTSUM("distinctSum"),
+  DISTINCTAVG("distinctAvg"),
   PERCENTILE("percentile"),
   PERCENTILEEST("percentileEst"),
   PERCENTILERAWEST("percentileRawEst"),
@@ -57,6 +59,15 @@ public enum AggregationFunctionType {
   PERCENTILESMARTTDIGEST("percentileSmartTDigest"),
   IDSET("idSet"),
   HISTOGRAM("histogram"),
+  COVARPOP("covarPop"),
+  COVARSAMP("covarSamp"),
+  VARPOP("varPop"),
+  VARSAMP("varSamp"),
+  STDDEVPOP("stdDevPop"),
+  STDDEVSAMP("stdDevSamp"),
+  SKEWNESS("skewness"),
+  KURTOSIS("kurtosis"),
+  FOURTHMOMENT("fourthmoment"),
 
   // Geo aggregation functions
   STUNION("STUnion"),
@@ -72,12 +83,18 @@ public enum AggregationFunctionType {
   DISTINCTCOUNTBITMAPMV("distinctCountBitmapMV"),
   DISTINCTCOUNTHLLMV("distinctCountHLLMV"),
   DISTINCTCOUNTRAWHLLMV("distinctCountRawHLLMV"),
+  DISTINCTSUMMV("distinctSumMV"),
+  DISTINCTAVGMV("distinctAvgMV"),
   PERCENTILEMV("percentileMV"),
   PERCENTILEESTMV("percentileEstMV"),
   PERCENTILERAWESTMV("percentileRawEstMV"),
   PERCENTILETDIGESTMV("percentileTDigestMV"),
   PERCENTILERAWTDIGESTMV("percentileRawTDigestMV"),
-  DISTINCT("distinct");
+  DISTINCT("distinct"),
+
+  // boolean aggregate functions
+  BOOLAND("boolAnd"),
+  BOOLOR("boolOr");
 
   private static final Set<String> NAMES = Arrays.stream(values()).flatMap(func -> Stream.of(func.name(),
       func.getName(), func.getName().toLowerCase())).collect(Collectors.toSet());

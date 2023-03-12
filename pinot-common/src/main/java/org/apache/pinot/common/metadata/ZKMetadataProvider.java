@@ -25,10 +25,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
-import org.I0Itec.zkclient.exception.ZkBadVersionException;
 import org.apache.helix.AccessOption;
-import org.apache.helix.ZNRecord;
+import org.apache.helix.store.HelixPropertyStore;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.zkclient.exception.ZkBadVersionException;
+import org.apache.pinot.common.assignment.InstancePartitions;
 import org.apache.pinot.common.metadata.instance.InstanceZKMetadata;
 import org.apache.pinot.common.metadata.segment.SegmentZKMetadata;
 import org.apache.pinot.common.utils.SchemaUtils;
@@ -55,6 +57,7 @@ public class ZKMetadataProvider {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(ZKMetadataProvider.class);
   private static final String CLUSTER_TENANT_ISOLATION_ENABLED_KEY = "tenantIsolationEnabled";
+  private static final String PROPERTYSTORE_CONTROLLER_JOBS_PREFIX = "/CONTROLLER_JOBS";
   private static final String PROPERTYSTORE_SEGMENTS_PREFIX = "/SEGMENTS";
   private static final String PROPERTYSTORE_SCHEMAS_PREFIX = "/SCHEMAS";
   private static final String PROPERTYSTORE_INSTANCE_PARTITIONS_PREFIX = "/INSTANCE_PARTITIONS";
@@ -109,6 +112,10 @@ public class ZKMetadataProvider {
     return StringUtil.join("/", PROPERTYSTORE_INSTANCE_PARTITIONS_PREFIX, instancePartitionsName);
   }
 
+  public static String constructPropertyStorePathForControllerJob() {
+    return StringUtil.join("/", PROPERTYSTORE_CONTROLLER_JOBS_PREFIX);
+  }
+
   public static String constructPropertyStorePathForResource(String resourceName) {
     return StringUtil.join("/", PROPERTYSTORE_SEGMENTS_PREFIX, resourceName);
   }
@@ -129,8 +136,16 @@ public class ZKMetadataProvider {
     return StringUtil.join("/", PROPERTYSTORE_SEGMENT_LINEAGE, tableNameWithType);
   }
 
+  public static String getPropertyStorePathForMinionTaskMetadataPrefix() {
+    return PROPERTYSTORE_MINION_TASK_METADATA_PREFIX;
+  }
+
   public static String constructPropertyStorePathForMinionTaskMetadata(String tableNameWithType, String taskType) {
     return StringUtil.join("/", PROPERTYSTORE_MINION_TASK_METADATA_PREFIX, tableNameWithType, taskType);
+  }
+
+  public static String constructPropertyStorePathForMinionTaskMetadata(String tableNameWithType) {
+    return StringUtil.join("/", PROPERTYSTORE_MINION_TASK_METADATA_PREFIX, tableNameWithType);
   }
 
   @Deprecated
@@ -206,6 +221,12 @@ public class ZKMetadataProvider {
     return setSegmentZKMetadata(propertyStore, tableNameWithType, segmentZKMetadata, -1);
   }
 
+  public static boolean removeSegmentZKMetadata(ZkHelixPropertyStore<ZNRecord> propertyStore, String tableNameWithType,
+      String segmentName) {
+    return propertyStore.remove(constructPropertyStorePathForSegment(tableNameWithType, segmentName),
+        AccessOption.PERSISTENT);
+  }
+
   @Nullable
   public static ZNRecord getZnRecord(ZkHelixPropertyStore<ZNRecord> propertyStore, String path) {
     Stat stat = new Stat();
@@ -235,9 +256,23 @@ public class ZKMetadataProvider {
     }
     try {
       UserConfig userConfig = AccessControlUserConfigUtils.fromZNRecord(znRecord);
-      return (UserConfig) ConfigUtils.applyConfigWithEnvVariables(userConfig);
+      return ConfigUtils.applyConfigWithEnvVariables(userConfig);
     } catch (Exception e) {
       LOGGER.error("Caught exception while getting user configuration for user: {}", username, e);
+      return null;
+    }
+  }
+
+  @Nullable
+  public static List<InstancePartitions> getAllInstancePartitions(HelixPropertyStore<ZNRecord> propertyStore) {
+    List<ZNRecord> znRecordss =
+        propertyStore.getChildren(PROPERTYSTORE_INSTANCE_PARTITIONS_PREFIX, null, AccessOption.PERSISTENT);
+
+    try {
+      return Optional.ofNullable(znRecordss).orElseGet(ArrayList::new).stream().map(InstancePartitions::fromZNRecord)
+          .collect(Collectors.toList());
+    } catch (Exception e) {
+      LOGGER.error("Caught exception while getting instance partitions", e);
       return null;
     }
   }
@@ -381,6 +416,27 @@ public class ZKMetadataProvider {
     if (schema != null && LOGGER.isDebugEnabled()) {
       LOGGER.debug("Schema name does not match raw table name, schema name: {}, raw table name: {}",
           schema.getSchemaName(), TableNameBuilder.extractRawTableName(tableName));
+    }
+    return schema;
+  }
+
+  /**
+   * Get the schema associated with the given table.
+   */
+  @Nullable
+  public static Schema getTableSchema(ZkHelixPropertyStore<ZNRecord> propertyStore, TableConfig tableConfig) {
+    String rawTableName = TableNameBuilder.extractRawTableName(tableConfig.getTableName());
+    Schema schema = getSchema(propertyStore, rawTableName);
+    if (schema != null) {
+      return schema;
+    }
+    String schemaNameFromTableConfig = tableConfig.getValidationConfig().getSchemaName();
+    if (schemaNameFromTableConfig != null) {
+      schema = getSchema(propertyStore, schemaNameFromTableConfig);
+    }
+    if (schema != null && LOGGER.isDebugEnabled()) {
+      LOGGER.debug("Schema name does not match raw table name, schema name: {}, raw table name: {}",
+          schemaNameFromTableConfig, rawTableName);
     }
     return schema;
   }

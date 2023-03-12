@@ -18,17 +18,19 @@
  */
 package org.apache.pinot.query.planner.logical;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
-import org.apache.calcite.rel.logical.LogicalExchange;
+import org.apache.calcite.rel.core.Exchange;
+import org.apache.pinot.common.config.provider.TableCache;
 import org.apache.pinot.query.context.PlannerContext;
 import org.apache.pinot.query.planner.QueryPlan;
 import org.apache.pinot.query.planner.StageMetadata;
 import org.apache.pinot.query.planner.partitioning.FieldSelectionKeySelector;
+import org.apache.pinot.query.planner.partitioning.KeySelector;
+import org.apache.pinot.query.planner.physical.colocated.GreedyShuffleRewriteVisitor;
 import org.apache.pinot.query.planner.stage.MailboxReceiveNode;
 import org.apache.pinot.query.planner.stage.MailboxSendNode;
 import org.apache.pinot.query.planner.stage.StageNode;
@@ -41,16 +43,18 @@ import org.apache.pinot.query.routing.WorkerManager;
  * This class is non-threadsafe. Do not reuse the stage planner for multiple query plans.
  */
 public class StagePlanner {
-  private final PlannerContext _plannerContext;
+  private final PlannerContext _plannerContext;   // DO NOT REMOVE.
   private final WorkerManager _workerManager;
-
-  private Map<Integer, StageNode> _queryStageMap;
-  private Map<Integer, StageMetadata> _stageMetadataMap;
+  private final TableCache _tableCache;
   private int _stageIdCounter;
+  private long _requestId;
 
-  public StagePlanner(PlannerContext plannerContext, WorkerManager workerManager) {
+  public StagePlanner(PlannerContext plannerContext, WorkerManager workerManager, long requestId,
+      TableCache tableCache) {
     _plannerContext = plannerContext;
     _workerManager = workerManager;
+    _requestId = requestId;
+    _tableCache = tableCache;
   }
 
   /**
@@ -59,78 +63,82 @@ public class StagePlanner {
    * @param relRoot relational plan root.
    * @return dispatchable plan.
    */
-  public QueryPlan makePlan(RelNode relRoot) {
-    // clear the state
-    _queryStageMap = new HashMap<>();
-    _stageMetadataMap = new HashMap<>();
+  public QueryPlan makePlan(RelRoot relRoot) {
+    RelNode relRootNode = relRoot.rel;
     // Stage ID starts with 1, 0 will be reserved for ROOT stage.
     _stageIdCounter = 1;
 
     // walk the plan and create stages.
-    StageNode globalStageRoot = walkRelPlan(relRoot, getNewStageId());
+    StageNode globalStageRoot = walkRelPlan(relRootNode, getNewStageId());
 
     // global root needs to send results back to the ROOT, a.k.a. the client response node. the last stage only has one
     // receiver so doesn't matter what the exchange type is. setting it to SINGLETON by default.
+    StageNode globalSenderNode = new MailboxSendNode(globalStageRoot.getStageId(), globalStageRoot.getDataSchema(),
+        0, RelDistribution.Type.RANDOM_DISTRIBUTED, null);
+    globalSenderNode.addInput(globalStageRoot);
+
     StageNode globalReceiverNode =
         new MailboxReceiveNode(0, globalStageRoot.getDataSchema(), globalStageRoot.getStageId(),
-            RelDistribution.Type.SINGLETON);
-    StageNode globalSenderNode = new MailboxSendNode(globalStageRoot.getStageId(), globalStageRoot.getDataSchema(),
-        globalReceiverNode.getStageId(), RelDistribution.Type.SINGLETON);
-    globalSenderNode.addInput(globalStageRoot);
-    _queryStageMap.put(globalSenderNode.getStageId(), globalSenderNode);
-    StageMetadata stageMetadata = _stageMetadataMap.get(globalSenderNode.getStageId());
-    stageMetadata.attach(globalSenderNode);
+            RelDistribution.Type.RANDOM_DISTRIBUTED, null, globalSenderNode);
 
-    _queryStageMap.put(globalReceiverNode.getStageId(), globalReceiverNode);
-    StageMetadata globalReceivingStageMetadata = new StageMetadata();
-    globalReceivingStageMetadata.attach(globalReceiverNode);
-    _stageMetadataMap.put(globalReceiverNode.getStageId(), globalReceivingStageMetadata);
+    QueryPlan queryPlan = StageMetadataVisitor.attachMetadata(relRoot.fields, globalReceiverNode);
 
     // assign workers to each stage.
-    for (Map.Entry<Integer, StageMetadata> e : _stageMetadataMap.entrySet()) {
-      _workerManager.assignWorkerToStage(e.getKey(), e.getValue());
+    for (Map.Entry<Integer, StageMetadata> e : queryPlan.getStageMetadataMap().entrySet()) {
+      _workerManager.assignWorkerToStage(e.getKey(), e.getValue(), _requestId, _plannerContext.getOptions());
     }
 
-    return new QueryPlan(_queryStageMap, _stageMetadataMap);
+    // Run physical optimizations
+    runPhysicalOptimizers(queryPlan);
+
+    return queryPlan;
   }
 
   // non-threadsafe
   // TODO: add dataSchema (extracted from RelNode schema) to the StageNode.
   private StageNode walkRelPlan(RelNode node, int currentStageId) {
     if (isExchangeNode(node)) {
-      // 1. exchangeNode always have only one input, get its input converted as a new stage root.
       StageNode nextStageRoot = walkRelPlan(node.getInput(0), getNewStageId());
-      RelDistribution distribution = ((LogicalExchange) node).getDistribution();
-      List<Integer> distributionKeys = distribution.getKeys();
-      RelDistribution.Type exchangeType = distribution.getType();
-
-      // 2. make an exchange sender and receiver node pair
-      StageNode mailboxReceiver = new MailboxReceiveNode(currentStageId, nextStageRoot.getDataSchema(),
-          nextStageRoot.getStageId(), exchangeType);
-      StageNode mailboxSender = new MailboxSendNode(nextStageRoot.getStageId(), nextStageRoot.getDataSchema(),
-          mailboxReceiver.getStageId(), exchangeType, exchangeType == RelDistribution.Type.HASH_DISTRIBUTED
-          ? new FieldSelectionKeySelector(distributionKeys) : null);
-      mailboxSender.addInput(nextStageRoot);
-
-      // 3. put the sender side as a completed stage.
-      _queryStageMap.put(mailboxSender.getStageId(), mailboxSender);
-
-      // 4. return the receiver (this is considered as a "virtual table scan" node for its parent.
-      return mailboxReceiver;
+      RelDistribution distribution = ((Exchange) node).getDistribution();
+      return createSendReceivePair(nextStageRoot, distribution, currentStageId);
     } else {
       StageNode stageNode = RelToStageConverter.toStageNode(node, currentStageId);
       List<RelNode> inputs = node.getInputs();
       for (RelNode input : inputs) {
         stageNode.addInput(walkRelPlan(input, currentStageId));
       }
-      StageMetadata stageMetadata = _stageMetadataMap.computeIfAbsent(currentStageId, (id) -> new StageMetadata());
-      stageMetadata.attach(stageNode);
       return stageNode;
     }
   }
 
+  // TODO: Switch to Worker SPI to avoid multiple-places where workers are assigned.
+  private void runPhysicalOptimizers(QueryPlan queryPlan) {
+    if (_plannerContext.getOptions().getOrDefault("useColocatedJoin", "false").equals("true")) {
+      GreedyShuffleRewriteVisitor.optimizeShuffles(queryPlan, _tableCache);
+    }
+  }
+
+  private StageNode createSendReceivePair(StageNode nextStageRoot, RelDistribution distribution, int currentStageId) {
+    List<Integer> distributionKeys = distribution.getKeys();
+    RelDistribution.Type exchangeType = distribution.getType();
+
+    // make an exchange sender and receiver node pair
+    // only HASH_DISTRIBUTED requires a partition key selector; so all other types (SINGLETON and BROADCAST)
+    // of exchange will not carry a partition key selector.
+    KeySelector<Object[], Object[]> keySelector = exchangeType == RelDistribution.Type.HASH_DISTRIBUTED
+        ? new FieldSelectionKeySelector(distributionKeys) : null;
+
+    StageNode mailboxSender = new MailboxSendNode(nextStageRoot.getStageId(), nextStageRoot.getDataSchema(),
+        currentStageId, exchangeType, keySelector);
+    StageNode mailboxReceiver = new MailboxReceiveNode(currentStageId, nextStageRoot.getDataSchema(),
+        nextStageRoot.getStageId(), exchangeType, keySelector, mailboxSender);
+    mailboxSender.addInput(nextStageRoot);
+
+    return mailboxReceiver;
+  }
+
   private boolean isExchangeNode(RelNode node) {
-    return (node instanceof LogicalExchange);
+    return (node instanceof Exchange);
   }
 
   private int getNewStageId() {

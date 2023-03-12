@@ -19,19 +19,29 @@
 package org.apache.pinot.controller.api.resources;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.google.common.collect.HashBiMap;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiKeyAuthDefinition;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
+import io.swagger.annotations.ApiResponse;
+import io.swagger.annotations.ApiResponses;
 import io.swagger.annotations.Authorization;
 import io.swagger.annotations.SecurityDefinition;
 import io.swagger.annotations.SwaggerDefinition;
+import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.ws.rs.DELETE;
@@ -50,21 +60,30 @@ import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriInfo;
+import org.apache.commons.httpclient.HttpConnectionManager;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.helix.model.InstanceConfig;
 import org.apache.helix.task.TaskPartitionState;
 import org.apache.helix.task.TaskState;
 import org.apache.pinot.common.exception.TableNotFoundException;
+import org.apache.pinot.common.minion.BaseTaskGeneratorInfo;
+import org.apache.pinot.common.minion.TaskManagerStatusCache;
+import org.apache.pinot.controller.ControllerConf;
 import org.apache.pinot.controller.api.access.AccessType;
 import org.apache.pinot.controller.api.access.Authenticate;
 import org.apache.pinot.controller.api.exception.ControllerApplicationException;
-import org.apache.pinot.controller.api.exception.NoTaskMetadataException;
 import org.apache.pinot.controller.api.exception.NoTaskScheduledException;
 import org.apache.pinot.controller.api.exception.TaskAlreadyExistsException;
 import org.apache.pinot.controller.api.exception.UnknownTaskTypeException;
+import org.apache.pinot.controller.helix.core.PinotHelixResourceManager;
 import org.apache.pinot.controller.helix.core.minion.PinotHelixTaskResourceManager;
 import org.apache.pinot.controller.helix.core.minion.PinotTaskManager;
+import org.apache.pinot.controller.util.CompletionServiceHelper;
 import org.apache.pinot.core.minion.PinotTaskConfig;
 import org.apache.pinot.spi.config.task.AdhocTaskConfig;
+import org.apache.pinot.spi.utils.JsonUtils;
 import org.glassfish.grizzly.http.server.Request;
 import org.glassfish.jersey.server.ManagedAsync;
 import org.quartz.CronTrigger;
@@ -117,6 +136,24 @@ public class PinotTaskRestletResource {
 
   @Inject
   PinotTaskManager _pinotTaskManager;
+
+  @Inject
+  TaskManagerStatusCache _taskManagerStatusCache;
+
+  @Inject
+  PinotHelixResourceManager _pinotHelixResourceManager;
+
+  @Inject
+  Executor _executor;
+
+  @Inject
+  HttpConnectionManager _connectionManager;
+
+  @Inject
+  ControllerConf _controllerConf;
+
+  @Context
+  private UriInfo _uriInfo;
 
   @GET
   @Path("/tasks/tasktypes")
@@ -176,8 +213,6 @@ public class PinotTaskRestletResource {
           String tableNameWithType) {
     try {
       return _pinotHelixTaskResourceManager.getTaskMetadataByTable(taskType, tableNameWithType);
-    } catch (NoTaskMetadataException e) {
-      throw new ControllerApplicationException(LOGGER, e.getMessage(), Response.Status.NOT_FOUND);
     } catch (JsonProcessingException e) {
       throw new ControllerApplicationException(LOGGER, String
           .format("Failed to format task metadata into Json for task type: %s from table: %s", taskType,
@@ -229,6 +264,60 @@ public class PinotTaskRestletResource {
           + "Value of > 0 prints subtask details for all tasks)")
       @DefaultValue("0") @QueryParam("verbosity") int verbosity) {
     return _pinotHelixTaskResourceManager.getTasksDebugInfoByTable(taskType, tableNameWithType, verbosity);
+  }
+
+  @GET
+  @Produces(MediaType.APPLICATION_JSON)
+  @Path("/tasks/generator/{tableNameWithType}/{taskType}/debug")
+  @ApiOperation("Fetch task generation information for the recent runs of the given task for the given table")
+  public String getTaskGenerationDebugInto(
+      @Context HttpHeaders httpHeaders,
+      @ApiParam(value = "Task type", required = true) @PathParam("taskType") String taskType,
+      @ApiParam(value = "Table name with type", required = true) @PathParam("tableNameWithType")
+          String tableNameWithType,
+      @ApiParam(value = "Whether to only lookup local cache for logs", defaultValue = "false") @QueryParam("localOnly")
+          boolean localOnly)
+      throws JsonProcessingException {
+    if (localOnly) {
+      BaseTaskGeneratorInfo taskGeneratorMostRecentRunInfo =
+          _taskManagerStatusCache.fetchTaskGeneratorInfo(tableNameWithType, taskType);
+      if (taskGeneratorMostRecentRunInfo == null) {
+        throw new ControllerApplicationException(LOGGER, "Task generation information not found",
+            Response.Status.NOT_FOUND);
+      }
+
+      return JsonUtils.objectToString(taskGeneratorMostRecentRunInfo);
+    }
+
+    // Call all controllers
+    List<InstanceConfig> controllers = _pinotHelixResourceManager.getAllControllerInstanceConfigs();
+    // Relying on original schema that was used to query the controller
+    URI uri = _uriInfo.getRequestUri();
+    String scheme = uri.getScheme();
+    List<String> controllerUrls = controllers.stream().map(controller -> String
+        .format("%s://%s:%d/tasks/generator/%s/%s/debug?localOnly=true", scheme, controller.getHostName(),
+            Integer.parseInt(controller.getPort()), tableNameWithType, taskType)).collect(Collectors.toList());
+
+    CompletionServiceHelper completionServiceHelper =
+        new CompletionServiceHelper(_executor, _connectionManager, HashBiMap.create(0));
+    Map<String, String> requestHeaders = new HashMap<>();
+    httpHeaders.getRequestHeaders().keySet().forEach(header -> {
+      requestHeaders.put(header, httpHeaders.getHeaderString(header));
+    });
+    LOGGER.debug("Getting task generation info with controllerUrls: {}", controllerUrls);
+    CompletionServiceHelper.CompletionServiceResponse serviceResponse =
+        completionServiceHelper.doMultiGetRequest(controllerUrls, null, true, requestHeaders, 10000);
+
+    List<JsonNode> result = new ArrayList<>();
+    serviceResponse._httpResponses.values().forEach(resp -> {
+      try {
+        result.add(JsonUtils.stringToJsonNode(resp));
+      } catch (IOException e) {
+        LOGGER.error("Failed to parse controller response {}", resp, e);
+      }
+    });
+
+    return JsonUtils.objectToString(result);
   }
 
   @GET
@@ -299,7 +388,15 @@ public class PinotTaskRestletResource {
   @ApiOperation("Get the task config (a list of child task configs) for the given task")
   public List<PinotTaskConfig> getTaskConfigs(
       @ApiParam(value = "Task name", required = true) @PathParam("taskName") String taskName) {
-    return _pinotHelixTaskResourceManager.getTaskConfigs(taskName);
+    return _pinotHelixTaskResourceManager.getSubtaskConfigs(taskName);
+  }
+
+  @GET
+  @Path("/tasks/task/{taskName}/runtime/config")
+  @ApiOperation("Get the task runtime config for the given task")
+  public Map<String, String> getTaskConfig(
+      @ApiParam(value = "Task name", required = true) @PathParam("taskName") String taskName) {
+    return _pinotHelixTaskResourceManager.getTaskRuntimeConfig(taskName);
   }
 
   @Deprecated
@@ -308,7 +405,7 @@ public class PinotTaskRestletResource {
   @ApiOperation("Get the task config (a list of child task configs) for the given task (deprecated)")
   public List<PinotTaskConfig> getTaskConfigsDeprecated(
       @ApiParam(value = "Task name", required = true) @PathParam("taskName") String taskName) {
-    return _pinotHelixTaskResourceManager.getTaskConfigs(taskName);
+    return _pinotHelixTaskResourceManager.getSubtaskConfigs(taskName);
   }
 
   @GET
@@ -319,6 +416,84 @@ public class PinotTaskRestletResource {
       @ApiParam(value = "Sub task names separated by comma") @QueryParam("subtaskNames") @Nullable
           String subtaskNames) {
     return _pinotHelixTaskResourceManager.getSubtaskConfigs(taskName, subtaskNames);
+  }
+
+  @GET
+  @Path("/tasks/subtask/{taskName}/progress")
+  @Produces(MediaType.APPLICATION_JSON)
+  @ApiOperation("Get progress of specified sub tasks for the given task tracked by minion worker in memory")
+  public String getSubtaskProgress(@Context HttpHeaders httpHeaders,
+      @ApiParam(value = "Task name", required = true) @PathParam("taskName") String taskName,
+      @ApiParam(value = "Sub task names separated by comma") @QueryParam("subtaskNames") @Nullable
+          String subtaskNames) {
+    // Relying on original schema that was used to query the controller
+    String scheme = _uriInfo.getRequestUri().getScheme();
+    List<InstanceConfig> workers = _pinotHelixResourceManager.getAllMinionInstanceConfigs();
+    Map<String, String> workerEndpoints = new HashMap<>();
+    for (InstanceConfig worker : workers) {
+      workerEndpoints.put(worker.getId(),
+          String.format("%s://%s:%d", scheme, worker.getHostName(), Integer.parseInt(worker.getPort())));
+    }
+    Map<String, String> requestHeaders = new HashMap<>();
+    httpHeaders.getRequestHeaders().keySet().forEach(header -> {
+      requestHeaders.put(header, httpHeaders.getHeaderString(header));
+    });
+    int timeoutMs = _controllerConf.getMinionAdminRequestTimeoutSeconds() * 1000;
+    try {
+      Map<String, Object> progress = _pinotHelixTaskResourceManager
+          .getSubtaskProgress(taskName, subtaskNames, _executor, _connectionManager, workerEndpoints, requestHeaders,
+              timeoutMs);
+      return JsonUtils.objectToString(progress);
+    } catch (UnknownTaskTypeException | NoTaskScheduledException e) {
+      throw new ControllerApplicationException(LOGGER, "Not task with name: " + taskName, Response.Status.NOT_FOUND, e);
+    } catch (Exception e) {
+      throw new ControllerApplicationException(LOGGER, String
+          .format("Failed to get worker side progress for task: %s due to error: %s", taskName,
+              ExceptionUtils.getStackTrace(e)), Response.Status.INTERNAL_SERVER_ERROR, e);
+    }
+  }
+
+  @GET
+  @Path("/tasks/subtask/workers/progress")
+  @Produces(MediaType.APPLICATION_JSON)
+  @ApiOperation("Get progress of all subtasks with specified state tracked by minion worker in memory")
+  @ApiResponses(value = {
+      @ApiResponse(code = 200, message = "Success"), @ApiResponse(code = 500, message = "Internal server error")
+  })
+  public String getSubtaskOnWorkerProgress(@Context HttpHeaders httpHeaders,
+      @ApiParam(value = "Subtask state (UNKNOWN,IN_PROGRESS,SUCCEEDED,CANCELLED,ERROR)", required = true)
+      @QueryParam("subTaskState") String subTaskState,
+      @ApiParam(value = "Minion worker IDs separated by comma") @QueryParam("minionWorkerIds") @Nullable
+          String minionWorkerIds) {
+    Set<String> selectedMinionWorkers = new HashSet<>();
+    if (StringUtils.isNotEmpty(minionWorkerIds)) {
+      selectedMinionWorkers.addAll(
+          Arrays.stream(StringUtils.split(minionWorkerIds, ',')).map(String::trim).collect(Collectors.toList()));
+    }
+    // Relying on original schema that was used to query the controller
+    String scheme = _uriInfo.getRequestUri().getScheme();
+    List<InstanceConfig> allMinionWorkerInstanceConfigs = _pinotHelixResourceManager.getAllMinionInstanceConfigs();
+    Map<String, String> selectedMinionWorkerEndpoints = new HashMap<>();
+    for (InstanceConfig worker : allMinionWorkerInstanceConfigs) {
+      if (selectedMinionWorkers.isEmpty() || selectedMinionWorkers.contains(worker.getId())) {
+        selectedMinionWorkerEndpoints.put(worker.getId(),
+            String.format("%s://%s:%d", scheme, worker.getHostName(), Integer.parseInt(worker.getPort())));
+      }
+    }
+    Map<String, String> requestHeaders = new HashMap<>();
+    httpHeaders.getRequestHeaders().keySet().forEach(header ->
+        requestHeaders.put(header, httpHeaders.getHeaderString(header)));
+    int timeoutMs = _controllerConf.getMinionAdminRequestTimeoutSeconds() * 1000;
+    try {
+      Map<String, Object> minionWorkerIdSubtaskProgressMap =
+          _pinotHelixTaskResourceManager.getSubtaskOnWorkerProgress(subTaskState, _executor, _connectionManager,
+              selectedMinionWorkerEndpoints, requestHeaders, timeoutMs);
+      return JsonUtils.objectToString(minionWorkerIdSubtaskProgressMap);
+    } catch (Exception e) {
+      throw new ControllerApplicationException(LOGGER,
+          String.format("Failed to get minion worker side progress for subtasks with state %s due to error: %s",
+              subTaskState, ExceptionUtils.getStackTrace(e)), Response.Status.INTERNAL_SERVER_ERROR, e);
+    }
   }
 
   @GET

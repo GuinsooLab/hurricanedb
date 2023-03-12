@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.helix.ZNRecord;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
 import org.apache.pinot.spi.utils.JsonUtils;
 
 
@@ -84,6 +84,10 @@ public class SegmentLineage {
     Preconditions.checkArgument(_lineageEntries.containsKey(lineageEntryId),
         String.format("Lineage entry id ('%s') does not exists. Please try with the valid lineage id", lineageEntryId));
     _lineageEntries.put(lineageEntryId, lineageEntry);
+  }
+
+  public Map<String, LineageEntry> getLineageEntries() {
+    return _lineageEntries;
   }
 
   /**

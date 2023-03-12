@@ -19,6 +19,7 @@
 package org.apache.pinot.query.service;
 
 import com.google.common.collect.Lists;
+import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -26,31 +27,43 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.apache.pinot.common.proto.PinotQueryWorkerGrpc;
 import org.apache.pinot.common.proto.Worker;
+import org.apache.pinot.common.utils.NamedThreadFactory;
+import org.apache.pinot.core.query.scheduler.resources.ResourceManager;
 import org.apache.pinot.core.transport.ServerInstance;
 import org.apache.pinot.query.QueryEnvironment;
-import org.apache.pinot.query.QueryEnvironmentTestUtils;
+import org.apache.pinot.query.QueryEnvironmentTestBase;
+import org.apache.pinot.query.QueryTestSet;
 import org.apache.pinot.query.planner.QueryPlan;
 import org.apache.pinot.query.planner.StageMetadata;
 import org.apache.pinot.query.planner.stage.StageNode;
+import org.apache.pinot.query.routing.VirtualServer;
 import org.apache.pinot.query.routing.WorkerInstance;
 import org.apache.pinot.query.runtime.QueryRunner;
 import org.apache.pinot.query.runtime.plan.serde.QueryPlanSerDeUtils;
+import org.apache.pinot.query.service.dispatch.QueryDispatcher;
+import org.apache.pinot.query.testutils.QueryTestUtils;
+import org.apache.pinot.spi.utils.CommonConstants;
 import org.apache.pinot.util.TestUtils;
 import org.mockito.Mockito;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
-import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
-import static org.mockito.ArgumentMatchers.any;
 
-
-public class QueryServerTest {
+public class QueryServerTest extends QueryTestSet {
   private static final Random RANDOM_REQUEST_ID_GEN = new Random();
   private static final int QUERY_SERVER_COUNT = 2;
+  private static final String KEY_OF_SERVER_INSTANCE_HOST = "pinot.query.runner.server.hostname";
+  private static final String KEY_OF_SERVER_INSTANCE_PORT = "pinot.query.runner.server.port";
+  private static final ExecutorService WORKER_EXECUTOR_SERVICE = Executors.newFixedThreadPool(
+      ResourceManager.DEFAULT_QUERY_WORKER_THREADS, new NamedThreadFactory("QueryServerTest_Worker"));
+  private static final ExecutorService RUNNER_EXECUTOR_SERVICE = Executors.newFixedThreadPool(
+      ResourceManager.DEFAULT_QUERY_RUNNER_THREADS, new NamedThreadFactory("QueryServerTest_Runner"));
+
   private final Map<Integer, QueryServer> _queryServerMap = new HashMap<>();
   private final Map<Integer, ServerInstance> _queryServerInstanceMap = new HashMap<>();
   private final Map<Integer, QueryRunner> _queryRunnerMap = new HashMap<>();
@@ -62,8 +75,10 @@ public class QueryServerTest {
       throws Exception {
 
     for (int i = 0; i < QUERY_SERVER_COUNT; i++) {
-      int availablePort = QueryEnvironmentTestUtils.getAvailablePort();
+      int availablePort = QueryTestUtils.getAvailablePort();
       QueryRunner queryRunner = Mockito.mock(QueryRunner.class);
+      Mockito.when(queryRunner.getQueryWorkerExecutorService()).thenReturn(WORKER_EXECUTOR_SERVICE);
+      Mockito.when(queryRunner.getQueryRunnerExecutorService()).thenReturn(RUNNER_EXECUTOR_SERVICE);
       QueryServer queryServer = new QueryServer(availablePort, queryRunner);
       queryServer.start();
       _queryServerMap.put(availablePort, queryServer);
@@ -77,7 +92,9 @@ public class QueryServerTest {
     List<Integer> portList = Lists.newArrayList(_queryServerMap.keySet());
 
     // reducer port doesn't matter, we are testing the worker instance not GRPC.
-    _queryEnvironment = QueryEnvironmentTestUtils.getQueryEnvironment(1, portList.get(0), portList.get(1));
+    _queryEnvironment = QueryEnvironmentTestBase.getQueryEnvironment(1, portList.get(0), portList.get(1),
+        QueryEnvironmentTestBase.TABLE_SCHEMAS, QueryEnvironmentTestBase.SERVER1_SEGMENTS,
+        QueryEnvironmentTestBase.SERVER2_SEGMENTS);
   }
 
   @AfterClass
@@ -88,7 +105,7 @@ public class QueryServerTest {
   }
 
   @SuppressWarnings("unchecked")
-  @Test(dataProvider = "testDataWithSqlToCompiledAsWorkerRequest")
+  @Test(dataProvider = "testSql")
   public void testWorkerAcceptsWorkerRequestCorrect(String sql)
       throws Exception {
     QueryPlan queryPlan = _queryEnvironment.planQuery(sql);
@@ -105,8 +122,8 @@ public class QueryServerTest {
 
         // ensure mock query runner received correctly deserialized payload.
         QueryRunner mockRunner = _queryRunnerMap.get(
-            Integer.parseInt(queryRequest.getMetadataOrThrow("SERVER_INSTANCE_PORT")));
-        String requestIdStr = queryRequest.getMetadataOrThrow("REQUEST_ID");
+            Integer.parseInt(queryRequest.getMetadataOrThrow(KEY_OF_SERVER_INSTANCE_PORT)));
+        String requestIdStr = queryRequest.getMetadataOrThrow(QueryConfig.KEY_OF_BROKER_REQUEST_ID);
 
         // since submitRequest is async, we need to wait for the mockRunner to receive the query payload.
         TestUtils.waitForCondition(aVoid -> {
@@ -115,8 +132,8 @@ public class QueryServerTest {
               StageNode stageNode = queryPlan.getQueryStageMap().get(stageId);
               return isStageNodesEqual(stageNode, distributedStagePlan.getStageRoot())
                   && isMetadataMapsEqual(stageMetadata, distributedStagePlan.getMetadataMap().get(stageId));
-            }), any(ExecutorService.class), Mockito.argThat(requestMetadataMap ->
-                requestIdStr.equals(requestMetadataMap.get("REQUEST_ID"))));
+            }), Mockito.argThat(requestMetadataMap ->
+                requestIdStr.equals(requestMetadataMap.get(QueryConfig.KEY_OF_BROKER_REQUEST_ID))));
             return true;
           } catch (Throwable t) {
             return false;
@@ -124,17 +141,6 @@ public class QueryServerTest {
         }, 10000L, "Error verifying mock QueryRunner intercepted query payload!");
       }
     }
-  }
-
-  @DataProvider(name = "testDataWithSqlToCompiledAsWorkerRequest")
-  private Object[][] provideTestSqlToCompiledToWorkerRequest() {
-    return new Object[][] {
-        new Object[]{"SELECT * FROM b"},
-        new Object[]{"SELECT * FROM a"},
-        new Object[]{"SELECT * FROM a JOIN b ON a.col3 = b.col3"},
-        new Object[]{"SELECT a.col1, a.ts, c.col2, c.col3 FROM a JOIN c ON a.col1 = c.col2 "
-            + " WHERE (a.col3 >= 0 OR a.col2 = 'foo') AND c.col3 >= 0"},
-    };
   }
 
   private static boolean isMetadataMapsEqual(StageMetadata left, StageMetadata right) {
@@ -161,22 +167,27 @@ public class QueryServerTest {
   }
 
   private void submitRequest(Worker.QueryRequest queryRequest) {
-    String host = queryRequest.getMetadataMap().get("SERVER_INSTANCE_HOST");
-    int port = Integer.parseInt(queryRequest.getMetadataMap().get("SERVER_INSTANCE_PORT"));
-    PinotQueryWorkerGrpc.PinotQueryWorkerBlockingStub stub =
-        PinotQueryWorkerGrpc.newBlockingStub(ManagedChannelBuilder.forAddress(host, port).usePlaintext().build());
+    String host = queryRequest.getMetadataMap().get(KEY_OF_SERVER_INSTANCE_HOST);
+    int port = Integer.parseInt(queryRequest.getMetadataMap().get(KEY_OF_SERVER_INSTANCE_PORT));
+    ManagedChannel channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
+    PinotQueryWorkerGrpc.PinotQueryWorkerBlockingStub stub = PinotQueryWorkerGrpc.newBlockingStub(channel);
     Worker.QueryResponse resp = stub.submit(queryRequest);
     // TODO: validate meaningful return value
-    Assert.assertNotNull(resp.getMetadataMap().get("OK"));
+    Assert.assertNotNull(resp.getMetadataMap().get(QueryConfig.KEY_OF_SERVER_RESPONSE_STATUS_OK));
+    channel.shutdown();
   }
 
   private Worker.QueryRequest getQueryRequest(QueryPlan queryPlan, int stageId) {
-    ServerInstance serverInstance = queryPlan.getStageMetadataMap().get(stageId).getServerInstances().get(0);
+    VirtualServer serverInstance = queryPlan.getStageMetadataMap().get(stageId).getServerInstances().get(0);
 
     return Worker.QueryRequest.newBuilder().setStagePlan(QueryPlanSerDeUtils.serialize(
             QueryDispatcher.constructDistributedStagePlan(queryPlan, stageId, serverInstance)))
-        .putMetadata("REQUEST_ID", String.valueOf(RANDOM_REQUEST_ID_GEN.nextLong()))
-        .putMetadata("SERVER_INSTANCE_HOST", serverInstance.getHostname())
-        .putMetadata("SERVER_INSTANCE_PORT", String.valueOf(serverInstance.getPort())).build();
+        // the default configurations that must exist.
+        .putMetadata(QueryConfig.KEY_OF_BROKER_REQUEST_ID, String.valueOf(RANDOM_REQUEST_ID_GEN.nextLong()))
+        .putMetadata(QueryConfig.KEY_OF_BROKER_REQUEST_TIMEOUT_MS,
+            String.valueOf(CommonConstants.Broker.DEFAULT_BROKER_TIMEOUT_MS))
+        // extra configurations we want to test also parsed out correctly.
+        .putMetadata(KEY_OF_SERVER_INSTANCE_HOST, serverInstance.getHostname())
+        .putMetadata(KEY_OF_SERVER_INSTANCE_PORT, String.valueOf(serverInstance.getPort())).build();
   }
 }

@@ -19,6 +19,7 @@
 package org.apache.pinot.sql.parsers;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,9 +58,9 @@ import org.apache.pinot.common.request.ExpressionType;
 import org.apache.pinot.common.request.Function;
 import org.apache.pinot.common.request.Identifier;
 import org.apache.pinot.common.request.PinotQuery;
+import org.apache.pinot.common.utils.config.QueryOptionsUtils;
 import org.apache.pinot.common.utils.request.RequestUtils;
 import org.apache.pinot.segment.spi.AggregationFunctionType;
-import org.apache.pinot.spi.utils.Pairs;
 import org.apache.pinot.sql.FilterKind;
 import org.apache.pinot.sql.parsers.parser.SqlInsertFromFile;
 import org.apache.pinot.sql.parsers.parser.SqlParserImpl;
@@ -107,8 +108,7 @@ public class CalciteSqlParser {
 
   public static SqlNodeAndOptions compileToSqlNodeAndOptions(String sql)
       throws SqlCompilationException {
-    // Remove the comments from the query
-    sql = removeComments(sql);
+    long parseStartTimeNs = System.nanoTime();
 
     // Remove the terminating semicolon from the query
     sql = removeTerminatingSemicolon(sql);
@@ -123,18 +123,20 @@ public class CalciteSqlParser {
       SqlParserImpl sqlParser = newSqlParser(inStream);
       SqlNodeList sqlNodeList = sqlParser.SqlStmtsEof();
       // Extract OPTION statements from sql.
-      SqlNodeAndOptions sqlNodeAndOptions = extractSqlNodeAndOptions(sqlNodeList);
+      SqlNodeAndOptions sqlNodeAndOptions = extractSqlNodeAndOptions(sql, sqlNodeList);
       // add legacy OPTIONS keyword-based options
       if (options.size() > 0) {
         sqlNodeAndOptions.setExtraOptions(extractOptionsMap(options));
       }
+      sqlNodeAndOptions.setParseTimeNs(System.nanoTime() - parseStartTimeNs);
       return sqlNodeAndOptions;
     } catch (Throwable e) {
       throw new SqlCompilationException("Caught exception while parsing query: " + sql, e);
     }
   }
 
-  public static SqlNodeAndOptions extractSqlNodeAndOptions(SqlNodeList sqlNodeList) {
+  @VisibleForTesting
+  static SqlNodeAndOptions extractSqlNodeAndOptions(String sql, SqlNodeList sqlNodeList) {
     PinotSqlType sqlType = null;
     SqlNode statementNode = null;
     Map<String, String> options = new HashMap<>();
@@ -166,13 +168,15 @@ public class CalciteSqlParser {
     if (sqlType == null) {
       throw new SqlCompilationException("SqlNode with executable statement not found!");
     }
-    return new SqlNodeAndOptions(statementNode, sqlType, options);
+    return new SqlNodeAndOptions(statementNode, sqlType, QueryOptionsUtils.resolveCaseInsensitiveOptions(options));
   }
 
   public static PinotQuery compileToPinotQuery(String sql)
       throws SqlCompilationException {
-    SqlNodeAndOptions sqlNodeAndOptions = compileToSqlNodeAndOptions(sql);
+    return compileToPinotQuery(compileToSqlNodeAndOptions(sql));
+  }
 
+  public static PinotQuery compileToPinotQuery(SqlNodeAndOptions sqlNodeAndOptions) {
     // Compile Sql without OPTION statements.
     PinotQuery pinotQuery = compileSqlNodeToPinotQuery(sqlNodeAndOptions.getSqlNode());
 
@@ -486,110 +490,6 @@ public class CalciteSqlParser {
     return options;
   }
 
-  private static void setOptions(PinotQuery pinotQuery, List<String> optionsStatements) {
-    if (optionsStatements.isEmpty()) {
-      return;
-    }
-    pinotQuery.setQueryOptions(extractOptionsMap(optionsStatements));
-  }
-
-  /**
-   * Removes comments from the query.
-   * NOTE: Comment indicator within single quotes (literal) and double quotes (identifier) are ignored.
-   */
-  @VisibleForTesting
-  static String removeComments(String sql) {
-    boolean openSingleQuote = false;
-    boolean openDoubleQuote = false;
-    boolean commented = false;
-    boolean singleLineCommented = false;
-    boolean multiLineCommented = false;
-    int commentStartIndex = -1;
-    List<Pairs.IntPair> commentedParts = new ArrayList<>();
-
-    int length = sql.length();
-    int index = 0;
-    while (index < length) {
-      switch (sql.charAt(index)) {
-        case '\'':
-          if (!commented && !openDoubleQuote) {
-            openSingleQuote = !openSingleQuote;
-          }
-          break;
-        case '"':
-          if (!commented && !openSingleQuote) {
-            openDoubleQuote = !openDoubleQuote;
-          }
-          break;
-        case '-':
-          // Single line comment start indicator: --
-          if (!commented && !openSingleQuote && !openDoubleQuote && index < length - 1
-              && sql.charAt(index + 1) == '-') {
-            commented = true;
-            singleLineCommented = true;
-            commentStartIndex = index;
-            index++;
-          }
-          break;
-        case '\n':
-          // Single line comment end indicator: \n
-          if (singleLineCommented) {
-            commentedParts.add(new Pairs.IntPair(commentStartIndex, index + 1));
-            commented = false;
-            singleLineCommented = false;
-            commentStartIndex = -1;
-          }
-          break;
-        case '/':
-          // Multi-line comment start indicator: /*
-          if (!commented && !openSingleQuote && !openDoubleQuote && index < length - 1
-              && sql.charAt(index + 1) == '*') {
-            commented = true;
-            multiLineCommented = true;
-            commentStartIndex = index;
-            index++;
-          }
-          break;
-        case '*':
-          // Multi-line comment end indicator: */
-          if (multiLineCommented && index < length - 1 && sql.charAt(index + 1) == '/') {
-            commentedParts.add(new Pairs.IntPair(commentStartIndex, index + 2));
-            commented = false;
-            multiLineCommented = false;
-            commentStartIndex = -1;
-            index++;
-          }
-          break;
-        default:
-          break;
-      }
-      index++;
-    }
-
-    if (commentedParts.isEmpty()) {
-      if (singleLineCommented) {
-        return sql.substring(0, commentStartIndex);
-      } else {
-        return sql;
-      }
-    } else {
-      StringBuilder stringBuilder = new StringBuilder();
-      int startIndex = 0;
-      for (Pairs.IntPair commentedPart : commentedParts) {
-        stringBuilder.append(sql, startIndex, commentedPart.getLeft()).append(' ');
-        startIndex = commentedPart.getRight();
-      }
-      if (startIndex < length) {
-        if (singleLineCommented) {
-          stringBuilder.append(sql, startIndex, commentStartIndex);
-        } else {
-          stringBuilder.append(sql, startIndex, length);
-        }
-      }
-      return stringBuilder.toString();
-    }
-  }
-
   private static List<Expression> convertDistinctSelectList(SqlNodeList selectList) {
     List<Expression> selectExpr = new ArrayList<>();
     selectExpr.add(convertDistinctAndSelectListToFunctionExpression(selectList));
@@ -669,6 +569,8 @@ public class CalciteSqlParser {
           return RequestUtils.getIdentifierExpression(((SqlIdentifier) node).getSimple());
         }
         return RequestUtils.getIdentifierExpression(node.toString());
+      case INTERVAL_QUALIFIER:
+        return RequestUtils.getLiteralExpression(node.toString());
       case LITERAL:
         return RequestUtils.getLiteralExpression((SqlLiteral) node);
       case AS:
@@ -709,6 +611,8 @@ public class CalciteSqlParser {
         SqlNodeList thenOperands = caseSqlNode.getThenOperands();
         SqlNode elseOperand = caseSqlNode.getElseOperand();
         Expression caseFuncExpr = RequestUtils.getFunctionExpression("case");
+        Preconditions.checkState(whenOperands.size() == thenOperands.size());
+        // TODO: convert this to new format once 0.13 is released
         for (SqlNode whenSqlNode : whenOperands.getList()) {
           Expression whenExpression = toExpression(whenSqlNode);
           if (isAggregateExpression(whenExpression)) {
@@ -776,8 +680,12 @@ public class CalciteSqlParser {
             functionNode.getFunctionQuantifier().toString()))) {
           if (canonicalName.equals("count")) {
             canonicalName = "distinctcount";
+          } else if (canonicalName.equals("sum")) {
+            canonicalName = "distinctsum";
+          } else if (canonicalName.equals("avg")) {
+            canonicalName = "distinctavg";
           } else if (AggregationFunctionType.isAggregationFunction(canonicalName)) {
-            // Aggregation function(other than COUNT) on DISTINCT is not supported, e.g. SUM(DISTINCT colA).
+            // Aggregation functions other than COUNT, SUM, AVG on DISTINCT are not supported.
             throw new SqlCompilationException("Function '" + functionName + "' on DISTINCT is not supported.");
           }
         }

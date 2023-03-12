@@ -18,12 +18,17 @@
  */
 package org.apache.pinot.common.minion;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
-import org.I0Itec.zkclient.exception.ZkException;
 import org.apache.helix.AccessOption;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.store.HelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.zkclient.exception.ZkException;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
+import org.apache.pinot.spi.config.table.TableType;
+import org.apache.pinot.spi.utils.StringUtil;
 import org.apache.zookeeper.data.Stat;
 
 
@@ -36,7 +41,7 @@ public final class MinionTaskMetadataUtils {
   }
 
   /**
-   * Fetches the ZNRecord for the given minion task and tableName. Fetch from the new path
+   * Fetches the minion task metadata ZNRecord for the given minion task and tableName. Fetch from the new path
    * MINION_TASK_METADATA/${tableNameWthType}/{taskType} if it exists; otherwise, fetch from the old path
    * MINION_TASK_METADATA/${taskType}/${tableNameWthType}.
    */
@@ -63,7 +68,68 @@ public final class MinionTaskMetadataUtils {
   }
 
   /**
-   * Deletes the ZNRecord for the given minion task and tableName, from both the new path
+   * Gets the last update time (in ms) of all minion task metadata.
+   * @param propertyStore the property store where all minion task metadata is stored.
+   * @return a map storing the last update time (in ms) of all minion task metadata: (tableNameWithType -> taskType
+   *         -> last update time in ms)
+   */
+  public static Map<String, Map<String, Long>> getAllTaskMetadataLastUpdateTimeMs(
+      HelixPropertyStore<ZNRecord> propertyStore) {
+    Map<String, Map<String, Long>> tableTaskLastUpdateTimeMsMap = new HashMap<>();
+    String propertyStorePathForMinionTaskMetadataPrefix =
+        ZKMetadataProvider.getPropertyStorePathForMinionTaskMetadataPrefix();
+    // the old and new path may exist at the same time
+    List<String> tableNameWithTypeOrTaskTypes =
+        propertyStore.getChildNames(propertyStorePathForMinionTaskMetadataPrefix, AccessOption.PERSISTENT);
+    if (tableNameWithTypeOrTaskTypes == null || tableNameWithTypeOrTaskTypes.isEmpty()) {
+      return tableTaskLastUpdateTimeMsMap;
+    }
+    for (String tableNameWithTypeOrTaskType : tableNameWithTypeOrTaskTypes) {
+      String metadataNodeDirectParentPath =
+          StringUtil.join("/", propertyStorePathForMinionTaskMetadataPrefix, tableNameWithTypeOrTaskType);
+      List<String> metadataNodeNames =
+          propertyStore.getChildNames(metadataNodeDirectParentPath, AccessOption.PERSISTENT);
+      if (metadataNodeNames == null || metadataNodeNames.isEmpty()) {
+        continue;
+      }
+      // the new path is MINION_TASK_METADATA/${tableNameWthType}/${taskType}
+      // the old path is MINION_TASK_METADATA/${taskType}/${tableNameWthType}
+      // The variable tableNameWithTypeOrTaskType stores the first level child name of MINION_TASK_METADATA, that's why
+      // when it ends with OFFLINE or REALTIME, it is a new path.
+      boolean isNewPath =
+          tableNameWithTypeOrTaskType.endsWith(TableType.OFFLINE.toString()) || tableNameWithTypeOrTaskType.endsWith(
+              TableType.REALTIME.toString());
+      for (String metadataNodeName : metadataNodeNames) {
+        String metadataNodePath = StringUtil.join("/", metadataNodeDirectParentPath, metadataNodeName);
+        Stat stat = propertyStore.getStat(metadataNodePath, AccessOption.PERSISTENT);
+        if (isNewPath) {
+          saveOrUpdateTaskMetadataLastUpdateTime(tableNameWithTypeOrTaskType, metadataNodeName, stat.getMtime(),
+              tableTaskLastUpdateTimeMsMap);
+        } else {
+          saveOrUpdateTaskMetadataLastUpdateTime(metadataNodeName, tableNameWithTypeOrTaskType, stat.getMtime(),
+              tableTaskLastUpdateTimeMsMap);
+        }
+      }
+    }
+    return tableTaskLastUpdateTimeMsMap;
+  }
+
+  private static void saveOrUpdateTaskMetadataLastUpdateTime(String tableNameWithType, String taskType,
+      long newLastUpdateTimeMs, Map<String, Map<String, Long>> tableTaskLastUpdateTimeMsMap) {
+    tableTaskLastUpdateTimeMsMap
+        .computeIfAbsent(tableNameWithType, tnt -> new HashMap<>())
+        .compute(taskType, (tt, lastUpdateTimeMs) -> {
+          if (lastUpdateTimeMs == null) {
+            return newLastUpdateTimeMs;
+          } else {
+            // the metadata may be saved in two different places, use the larger one
+            return Math.max(lastUpdateTimeMs, newLastUpdateTimeMs);
+          }
+        });
+  }
+
+  /**
+   * Deletes the minion task metadata ZNRecord for the given minion task and tableName, from both the new path
    * MINION_TASK_METADATA/${tableNameWthType}/${taskType} and the old path
    * MINION_TASK_METADATA/${taskType}/${tableNameWthType}.
    */
@@ -80,9 +146,43 @@ public final class MinionTaskMetadataUtils {
   }
 
   /**
+   * Deletes the minion task metadata ZNRecord for the given tableName, from both the new path
+   * MINION_TASK_METADATA/${tableNameWthType} and the old path
+   * MINION_TASK_METADATA/<any task type>/${tableNameWthType}
+   */
+  public static void deleteTaskMetadata(HelixPropertyStore<ZNRecord> propertyStore, String tableNameWithType) {
+    // delete the minion task metadata ZNRecord MINION_TASK_METADATA/${tableNameWthType}
+    String path = ZKMetadataProvider.constructPropertyStorePathForMinionTaskMetadata(tableNameWithType);
+    if (!propertyStore.remove(path, AccessOption.PERSISTENT)) {
+      throw new ZkException("Failed to delete task metadata for table: " + tableNameWithType);
+    }
+    // delete the minion task metadata ZNRecord MINION_TASK_METADATA/<any task type>/${tableNameWthType}
+    // TODO: another way of finding old minion task metadata path is: (1) use reflection to find all task types,
+    //   similar to what TaskGeneratorRegistry.java does (2) construct possible old minion task metadata path
+    //   using those types.
+    //   The tradeoff is: (1) the current approach uses ZK as the source of truth, so we will not miss any ZNode
+    //   (2) the other approach will reduce ZK load if there are thousands of tables, because we need to talk to
+    //   the ZK to find all its direct children in the current approach.
+    List<String> childNames =
+        propertyStore.getChildNames(ZKMetadataProvider.getPropertyStorePathForMinionTaskMetadataPrefix(),
+            AccessOption.PERSISTENT);
+    if (childNames != null && !childNames.isEmpty()) {
+      for (String child : childNames) {
+        // Even though some child names are not task types (e.g., in the new metadata path, the child name
+        // is a table name), it does not harm to try to delete the non-existent constructed path.
+        String oldPath =
+            ZKMetadataProvider.constructPropertyStorePathForMinionTaskMetadataDeprecated(child, tableNameWithType);
+        if (!propertyStore.remove(oldPath, AccessOption.PERSISTENT)) {
+          throw new ZkException("Failed to delete task metadata: " + child + ", " + tableNameWithType);
+        }
+      }
+    }
+  }
+
+  /**
    * Generic method for persisting {@link BaseTaskMetadata} to MINION_TASK_METADATA. The metadata will
    * be saved in the ZNode under the new path /MINION_TASK_METADATA/${tableNameWithType}/${taskType} if
-   * the old path already exists; otherwise, it will be saved in the ZNode under the old path
+   * it exists or the old path does not exist; otherwise, it will be saved in the ZNode under the old path
    * /MINION_TASK_METADATA/${taskType}/${tableNameWithType}.
    *
    * Will fail if expectedVersion does not match.

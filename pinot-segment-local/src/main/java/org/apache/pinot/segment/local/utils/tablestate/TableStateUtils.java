@@ -27,19 +27,56 @@ import org.apache.helix.PropertyKey;
 import org.apache.helix.model.CurrentState;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.model.LiveInstance;
-import org.apache.pinot.spi.utils.CommonConstants;
+import org.apache.pinot.spi.utils.CommonConstants.Helix.StateModel.SegmentStateModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
 public class TableStateUtils {
   private static final Logger LOGGER = LoggerFactory.getLogger(TableStateUtils.class);
+  private static final int MAX_NUM_SEGMENTS_TO_LOG = 10;
 
   private TableStateUtils() {
   }
 
   /**
-   * Checks if all segments for the given @param tableNameWithType are succesfully loaded
+   * Returns all segments in a given state for a given table.
+   *
+   * @param helixManager instance of Helix manager
+   * @param tableNameWithType table for which we are obtaining segments in a given state
+   * @param state state of the segments to be returned
+   *
+   * @return List of segment names in a given state.
+   */
+  public static List<String> getSegmentsInGivenStateForThisInstance(HelixManager helixManager, String tableNameWithType,
+      String state) {
+    HelixDataAccessor dataAccessor = helixManager.getHelixDataAccessor();
+    PropertyKey.Builder keyBuilder = dataAccessor.keyBuilder();
+    IdealState idealState = dataAccessor.getProperty(keyBuilder.idealStates(tableNameWithType));
+    List<String> segmentsInGivenState = new ArrayList<>();
+    if (idealState == null) {
+      LOGGER.warn("Failed to find ideal state for table: {}", tableNameWithType);
+      return segmentsInGivenState;
+    }
+
+    // Get all segments with state from idealState
+    String instanceName = helixManager.getInstanceName();
+    Map<String, Map<String, String>> idealStatesMap = idealState.getRecord().getMapFields();
+    for (Map.Entry<String, Map<String, String>> entry : idealStatesMap.entrySet()) {
+      String segmentName = entry.getKey();
+      Map<String, String> instanceStateMap = entry.getValue();
+      String expectedState = instanceStateMap.get(instanceName);
+      // Only track state segments assigned to the current instance
+      if (!state.equals(expectedState)) {
+        continue;
+      }
+      segmentsInGivenState.add(segmentName);
+    }
+    return segmentsInGivenState;
+  }
+
+  /**
+   * Checks if all segments for the given @param tableNameWithType were succesfully loaded
    * This function will get all segments in IDEALSTATE and CURRENTSTATE for the given table,
    * and then check if all ONLINE segments in IDEALSTATE match with CURRENTSTATE.
    * @param helixManager helix manager for the server instance
@@ -47,75 +84,57 @@ public class TableStateUtils {
    * @return true if all segments for the given table are succesfully loaded. False otherwise
    */
   public static boolean isAllSegmentsLoaded(HelixManager helixManager, String tableNameWithType) {
+    List<String> onlineSegments =
+        getSegmentsInGivenStateForThisInstance(helixManager, tableNameWithType, SegmentStateModel.ONLINE);
+    if (onlineSegments.isEmpty()) {
+      LOGGER.info("No ONLINE segment found for table: {}", tableNameWithType);
+      return true;
+    }
+
+    // Check if ideal state and current state matches for all segments assigned to the current instance
     HelixDataAccessor dataAccessor = helixManager.getHelixDataAccessor();
     PropertyKey.Builder keyBuilder = dataAccessor.keyBuilder();
-    IdealState idealState = dataAccessor.getProperty(keyBuilder.idealStates(tableNameWithType));
-    if (idealState == null) {
-      LOGGER.warn("Failed to find ideal state for table: {}", tableNameWithType);
+    String instanceName = helixManager.getInstanceName();
+    LiveInstance liveInstance = dataAccessor.getProperty(keyBuilder.liveInstance(instanceName));
+    if (liveInstance == null) {
+      LOGGER.warn("Failed to find live instance for instance: {}", instanceName);
       return false;
     }
-
-    // Get all ONLINE segments from idealState
-    String instanceName = helixManager.getInstanceName();
-    List<String> onlineSegments = new ArrayList<>();
-    Map<String, Map<String, String>> idealStatesMap = idealState.getRecord().getMapFields();
-    for (Map.Entry<String, Map<String, String>> entry : idealStatesMap.entrySet()) {
-      String segmentName = entry.getKey();
-      Map<String, String> instanceStateMap = entry.getValue();
-      String expectedState = instanceStateMap.get(instanceName);
-      // Only track ONLINE segments assigned to the current instance
-      if (!CommonConstants.Helix.StateModel.SegmentStateModel.ONLINE.equals(expectedState)) {
-        continue;
-      }
-      onlineSegments.add(segmentName);
+    String sessionId = liveInstance.getEphemeralOwner();
+    CurrentState currentState =
+        dataAccessor.getProperty(keyBuilder.currentState(instanceName, sessionId, tableNameWithType));
+    if (currentState == null) {
+      LOGGER.warn("Failed to find current state for instance: {}, sessionId: {}, table: {}", instanceName, sessionId,
+          tableNameWithType);
+      return false;
     }
-
-    if (onlineSegments.size() > 0) {
-      LiveInstance liveInstance = dataAccessor.getProperty(keyBuilder.liveInstance(instanceName));
-      if (liveInstance == null) {
-        LOGGER.warn("Failed to find live instance for instance: {}", instanceName);
-        return false;
-      }
-      String sessionId = liveInstance.getEphemeralOwner();
-      CurrentState currentState =
-          dataAccessor.getProperty(keyBuilder.currentState(instanceName, sessionId, tableNameWithType));
-      if (currentState == null) {
-        LOGGER.warn("Failed to find current state for instance: {}, sessionId: {}, table: {}", instanceName, sessionId,
-            tableNameWithType);
-        return false;
-      }
-      // Check if ideal state and current state matches for all segments assigned to the current instance
-      Map<String, String> currentStateMap = currentState.getPartitionStateMap();
-
-      for (String segmentName : onlineSegments) {
-        String actualState = currentStateMap.get(segmentName);
-        if (!CommonConstants.Helix.StateModel.SegmentStateModel.ONLINE.equals(actualState)) {
-          if (CommonConstants.Helix.StateModel.SegmentStateModel.ERROR.equals(actualState)) {
-            LOGGER.error("Find ERROR segment: {}, table: {}, expected: {}", segmentName, tableNameWithType,
-                CommonConstants.Helix.StateModel.SegmentStateModel.ONLINE);
-          } else {
-            LOGGER.info("Find unloaded segment: {}, table: {}, expected: {}, actual: {}", segmentName,
-                tableNameWithType, CommonConstants.Helix.StateModel.SegmentStateModel.ONLINE, actualState);
-          }
+    List<String> unloadedSegments = new ArrayList<>();
+    Map<String, String> currentStateMap = currentState.getPartitionStateMap();
+    for (String segmentName : onlineSegments) {
+      String actualState = currentStateMap.get(segmentName);
+      if (!SegmentStateModel.ONLINE.equals(actualState)) {
+        if (SegmentStateModel.ERROR.equals(actualState)) {
+          LOGGER.error("Found segment: {}, table: {} in ERROR state, expected: {}", segmentName, tableNameWithType,
+              SegmentStateModel.ONLINE);
           return false;
+        } else {
+          unloadedSegments.add(segmentName);
         }
       }
     }
-
-    LOGGER.info("All segments loaded for table: {}", tableNameWithType);
-    return true;
-  }
-
-  public static void waitForAllSegmentsLoaded(HelixManager helixManager, String tableNameWithType) {
-    try {
-      while (!TableStateUtils.isAllSegmentsLoaded(helixManager, tableNameWithType)) {
-        LOGGER.info("Sleeping 1 second waiting for all segments loaded for table: {}", tableNameWithType);
-        //noinspection BusyWait
-        Thread.sleep(1000L);
+    if (unloadedSegments.isEmpty()) {
+      LOGGER.info("All segments loaded for table: {}", tableNameWithType);
+      return true;
+    } else {
+      int numUnloadedSegments = unloadedSegments.size();
+      if (numUnloadedSegments <= MAX_NUM_SEGMENTS_TO_LOG) {
+        LOGGER.info("Found {} unloaded segments: {} for table: {}", numUnloadedSegments, unloadedSegments,
+            tableNameWithType);
+      } else {
+        LOGGER.info("Found {} unloaded segments: {}... for table: {}", numUnloadedSegments,
+            unloadedSegments.subList(0, MAX_NUM_SEGMENTS_TO_LOG), tableNameWithType);
       }
-    } catch (Exception e) {
-      throw new RuntimeException(
-          "Caught exception while waiting for all segments loaded for table: " + tableNameWithType, e);
+      return false;
     }
   }
 }

@@ -18,6 +18,7 @@
  */
 package org.apache.pinot.plugin.stream.kafka20;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +29,8 @@ import org.apache.pinot.spi.stream.LongMsgOffset;
 import org.apache.pinot.spi.stream.MessageBatch;
 import org.apache.pinot.spi.stream.PartitionLevelConsumer;
 import org.apache.pinot.spi.stream.StreamConfig;
+import org.apache.pinot.spi.stream.StreamMessage;
+import org.apache.pinot.spi.stream.StreamMessageMetadata;
 import org.apache.pinot.spi.stream.StreamPartitionMsgOffset;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,44 +38,55 @@ import org.slf4j.LoggerFactory;
 
 public class KafkaPartitionLevelConsumer extends KafkaPartitionLevelConnectionHandler
     implements PartitionLevelConsumer {
-
   private static final Logger LOGGER = LoggerFactory.getLogger(KafkaPartitionLevelConsumer.class);
+
+  private long _lastFetchedOffset = -1;
 
   public KafkaPartitionLevelConsumer(String clientId, StreamConfig streamConfig, int partition) {
     super(clientId, streamConfig, partition);
   }
 
   @Override
-  public MessageBatch<byte[]> fetchMessages(StreamPartitionMsgOffset startMsgOffset,
+  public MessageBatch<StreamMessage<byte[]>> fetchMessages(StreamPartitionMsgOffset startMsgOffset,
       StreamPartitionMsgOffset endMsgOffset, int timeoutMillis) {
     final long startOffset = ((LongMsgOffset) startMsgOffset).getOffset();
     final long endOffset = endMsgOffset == null ? Long.MAX_VALUE : ((LongMsgOffset) endMsgOffset).getOffset();
     return fetchMessages(startOffset, endOffset, timeoutMillis);
   }
 
-  public MessageBatch<byte[]> fetchMessages(long startOffset, long endOffset, int timeoutMillis) {
+  public synchronized MessageBatch<StreamMessage<byte[]>> fetchMessages(long startOffset, long endOffset,
+      int timeoutMillis) {
     if (LOGGER.isDebugEnabled()) {
-      LOGGER.debug("poll consumer: {}, startOffset: {}, endOffset:{} timeout: {}ms", _topicPartition, startOffset,
+      LOGGER.debug("Polling partition: {}, startOffset: {}, endOffset: {} timeout: {}ms", _topicPartition, startOffset,
           endOffset, timeoutMillis);
     }
-    _consumer.seek(_topicPartition, startOffset);
+    if (_lastFetchedOffset < 0 || _lastFetchedOffset != startOffset - 1) {
+      if (LOGGER.isDebugEnabled()) {
+        LOGGER.debug("Seeking to offset: {}", startOffset);
+      }
+      _consumer.seek(_topicPartition, startOffset);
+    }
     ConsumerRecords<String, Bytes> consumerRecords = _consumer.poll(Duration.ofMillis(timeoutMillis));
     List<ConsumerRecord<String, Bytes>> messageAndOffsets = consumerRecords.records(_topicPartition);
-    List<MessageAndOffsetAndMetadata> filtered = new ArrayList<>(messageAndOffsets.size());
+    List<StreamMessage<byte[]>> filtered = new ArrayList<>(messageAndOffsets.size());
     long lastOffset = startOffset;
     for (ConsumerRecord<String, Bytes> messageAndOffset : messageAndOffsets) {
-      Bytes message = messageAndOffset.value();
       long offset = messageAndOffset.offset();
-      if (offset >= startOffset & (endOffset > offset | endOffset == -1)) {
+      _lastFetchedOffset = offset;
+      if (offset >= startOffset && (endOffset > offset || endOffset < 0)) {
+        Bytes message = messageAndOffset.value();
         if (message != null) {
-          filtered.add(
-              new MessageAndOffsetAndMetadata(message.get(), offset, _rowMetadataExtractor.extract(messageAndOffset)));
+          String key = messageAndOffset.key();
+          byte[] keyBytes = key != null ? key.getBytes(StandardCharsets.UTF_8) : null;
+          StreamMessageMetadata rowMetadata = (StreamMessageMetadata) _kafkaMetadataExtractor.extract(messageAndOffset);
+          filtered.add(new KafkaStreamMessage(keyBytes, message.get(), rowMetadata));
         } else if (LOGGER.isDebugEnabled()) {
-          LOGGER.debug("tombstone message at offset {}", offset);
+          LOGGER.debug("Tombstone message at offset: {}", offset);
         }
         lastOffset = offset;
       } else if (LOGGER.isDebugEnabled()) {
-        LOGGER.debug("filter message at offset {} (outside of offset range {} {})", offset, startOffset, endOffset);
+        LOGGER.debug("Ignoring message at offset: {} (outside of offset range [{}, {}))", offset, startOffset,
+            endOffset);
       }
     }
     return new KafkaMessageBatch(messageAndOffsets.size(), lastOffset, filtered);

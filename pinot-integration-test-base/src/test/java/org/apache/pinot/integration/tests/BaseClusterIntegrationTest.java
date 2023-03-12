@@ -20,6 +20,7 @@ package org.apache.pinot.integration.tests;
 
 import com.google.common.base.Function;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Connection;
@@ -54,7 +55,9 @@ import org.apache.pinot.spi.data.Schema;
 import org.apache.pinot.spi.stream.StreamConfig;
 import org.apache.pinot.spi.stream.StreamConfigProperties;
 import org.apache.pinot.spi.stream.StreamDataServerStartable;
+import org.apache.pinot.spi.utils.JsonUtils;
 import org.apache.pinot.spi.utils.builder.TableConfigBuilder;
+import org.apache.pinot.spi.utils.builder.TableNameBuilder;
 import org.apache.pinot.tools.utils.KafkaStarterUtils;
 import org.apache.pinot.util.TestUtils;
 import org.testng.Assert;
@@ -130,7 +133,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected boolean useLlc() {
-    return false;
+    return true;
   }
 
   protected boolean useKafkaTransaction() {
@@ -296,6 +299,20 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
     return getSchema(getSchemaName());
   }
 
+  protected Schema createSchema(File schemaFile)
+      throws IOException {
+    InputStream inputStream = new FileInputStream(schemaFile);
+    Assert.assertNotNull(inputStream);
+    return JsonUtils.inputStreamToObject(inputStream, Schema.class);
+  }
+
+  protected TableConfig createTableConfig(File tableConfigFile)
+      throws IOException {
+    InputStream inputStream = new FileInputStream(tableConfigFile);
+    Assert.assertNotNull(inputStream);
+    return JsonUtils.inputStreamToObject(inputStream, TableConfig.class);
+  }
+
   /**
    * Creates a new OFFLINE table config.
    */
@@ -397,7 +414,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
         .setRoutingConfig(new RoutingConfig(null, null, RoutingConfig.STRICT_REPLICA_GROUP_INSTANCE_SELECTOR_TYPE))
         .setSegmentPartitionConfig(new SegmentPartitionConfig(columnPartitionConfigMap))
         .setReplicaGroupStrategyConfig(new ReplicaGroupStrategyConfig(primaryKeyColumn, 1))
-        .setUpsertConfig(new UpsertConfig(UpsertConfig.Mode.FULL, null, null, null, null)).build();
+        .setUpsertConfig(new UpsertConfig(UpsertConfig.Mode.FULL)).build();
   }
 
   /**
@@ -459,13 +476,21 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   /**
-   * Sets up the H2 connection to a table with pre-loaded data.
+   * Sets up the H2 connection
    */
-  protected void setUpH2Connection(List<File> avroFiles)
+  protected void setUpH2Connection()
       throws Exception {
     Assert.assertNull(_h2Connection);
     Class.forName("org.h2.Driver");
     _h2Connection = DriverManager.getConnection("jdbc:h2:mem:");
+  }
+
+  /**
+   * Sets up the H2 connection to a table with pre-loaded data.
+   */
+  protected void setUpH2Connection(List<File> avroFiles)
+      throws Exception {
+    setUpH2Connection();
     ClusterIntegrationTestUtils.setUpH2TableWithAvro(avroFiles, getTableName(), _h2Connection);
   }
 
@@ -561,11 +586,13 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
    * Get current result for "SELECT COUNT(*)".
    *
    * @return Current count start result
-   * @throws Exception
    */
-  protected long getCurrentCountStarResult()
-      throws Exception {
-    return getPinotConnection().execute("SELECT COUNT(*) FROM " + getTableName()).getResultSet(0).getLong(0);
+  protected long getCurrentCountStarResult() {
+    return getCurrentCountStarResult(getTableName());
+  }
+
+  protected long getCurrentCountStarResult(String tableName) {
+    return getPinotConnection().execute("SELECT COUNT(*) FROM " + tableName).getResultSet(0).getLong(0);
   }
 
   /**
@@ -580,18 +607,31 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void waitForDocsLoaded(long timeoutMs, boolean raiseError) {
+    waitForDocsLoaded(timeoutMs, raiseError, getTableName());
+  }
+
+  protected void waitForDocsLoaded(long timeoutMs, boolean raiseError, String tableName) {
     final long countStarResult = getCountStarResult();
     TestUtils.waitForCondition(new Function<Void, Boolean>() {
       @Nullable
       @Override
       public Boolean apply(@Nullable Void aVoid) {
         try {
-          return getCurrentCountStarResult() == countStarResult;
+          return getCurrentCountStarResult(tableName) == countStarResult;
         } catch (Exception e) {
           return null;
         }
       }
     }, 100L, timeoutMs, "Failed to load " + countStarResult + " documents", raiseError);
+  }
+
+  /**
+   * Reset table utils.
+   */
+  protected void resetTable(String tableName, TableType tableType, @Nullable String targetInstance)
+      throws IOException {
+    getControllerRequestClient().resetTable(TableNameBuilder.forType(tableType).tableNameWithType(tableName),
+        targetInstance);
   }
 
   /**

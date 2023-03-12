@@ -44,6 +44,16 @@ import "plan.proto";
 service PinotQueryWorker {
   // Dispatch a QueryRequest to a PinotQueryWorker
   rpc Submit(QueryRequest) returns (QueryResponse);
+
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+}
+
+message CancelRequest {
+  int64 requestId = 1;
+}
+
+message CancelResponse {
+  // intentionally left empty
 }
 
 // QueryRequest is the dispatched content for a specific query stage on a specific worker.
@@ -68,7 +78,13 @@ message StagePlan {
 message StageMetadata {
   repeated string instances = 1;
   repeated string dataSources = 2;
-  map<string, SegmentList> instanceToSegmentList = 3;
+  map<string, SegmentMap> instanceToSegmentMap = 3;
+  string timeColumn = 4;
+  string timeValue = 5;
+}
+
+message SegmentMap {
+  map<string, SegmentList> tableTypeToSegmentList = 1;
 }
 
 message SegmentList {

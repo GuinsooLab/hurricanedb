@@ -18,30 +18,34 @@
  */
 package org.apache.pinot.core.query.selection;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import org.apache.pinot.common.datatable.DataTable;
 import org.apache.pinot.common.request.context.ExpressionContext;
 import org.apache.pinot.common.request.context.OrderByExpressionContext;
 import org.apache.pinot.common.response.broker.ResultTable;
 import org.apache.pinot.common.utils.DataSchema;
 import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
-import org.apache.pinot.common.utils.DataTable;
 import org.apache.pinot.core.common.datatable.DataTableBuilder;
-import org.apache.pinot.core.common.datatable.DataTableFactory;
+import org.apache.pinot.core.common.datatable.DataTableBuilderFactory;
+import org.apache.pinot.core.operator.blocks.results.SelectionResultsBlock;
 import org.apache.pinot.core.query.request.context.QueryContext;
 import org.apache.pinot.segment.spi.IndexSegment;
+import org.apache.pinot.spi.trace.Tracing;
 import org.apache.pinot.spi.utils.ArrayCopyUtils;
 import org.apache.pinot.spi.utils.ByteArray;
+import org.roaringbitmap.RoaringBitmap;
 
 
 /**
@@ -188,31 +192,70 @@ public class SelectionOperatorUtils {
   /**
    * Merge two partial results for selection queries without <code>ORDER BY</code>. (Server side)
    *
-   * @param mergedRows partial results 1.
-   * @param rowsToMerge partial results 2.
+   * @param mergedBlock partial results 1.
+   * @param blockToMerge partial results 2.
    * @param selectionSize size of the selection.
    */
-  public static void mergeWithoutOrdering(Collection<Object[]> mergedRows, Collection<Object[]> rowsToMerge,
+  public static void mergeWithoutOrdering(SelectionResultsBlock mergedBlock, SelectionResultsBlock blockToMerge,
       int selectionSize) {
-    Iterator<Object[]> iterator = rowsToMerge.iterator();
-    while (mergedRows.size() < selectionSize && iterator.hasNext()) {
-      mergedRows.add(iterator.next());
+    List<Object[]> mergedRows = mergedBlock.getRows();
+    List<Object[]> rowsToMerge = blockToMerge.getRows();
+    int numRowsToMerge = Math.min(selectionSize - mergedRows.size(), rowsToMerge.size());
+    if (numRowsToMerge > 0) {
+      mergedRows.addAll(rowsToMerge.subList(0, numRowsToMerge));
     }
   }
 
   /**
    * Merge two partial results for selection queries with <code>ORDER BY</code>. (Server side)
-   * TODO: Should use type compatible comparator to compare the rows
    *
-   * @param mergedRows partial results 1.
-   * @param rowsToMerge partial results 2.
+   * @param mergedBlock partial results 1 (sorted).
+   * @param blockToMerge partial results 2 (sorted).
    * @param maxNumRows maximum number of rows need to be stored.
    */
-  public static void mergeWithOrdering(PriorityQueue<Object[]> mergedRows, Collection<Object[]> rowsToMerge,
+  public static void mergeWithOrdering(SelectionResultsBlock mergedBlock, SelectionResultsBlock blockToMerge,
       int maxNumRows) {
-    for (Object[] row : rowsToMerge) {
-      addToPriorityQueue(row, mergedRows, maxNumRows);
+    List<Object[]> sortedRows1 = mergedBlock.getRows();
+    List<Object[]> sortedRows2 = blockToMerge.getRows();
+    Comparator<? super Object[]> comparator = mergedBlock.getComparator();
+    assert comparator != null;
+    int numSortedRows1 = sortedRows1.size();
+    int numSortedRows2 = sortedRows2.size();
+    if (numSortedRows1 == 0) {
+      mergedBlock.setRows(sortedRows2);
+      return;
     }
+    if (numSortedRows2 == 0 || (numSortedRows1 == maxNumRows
+        && comparator.compare(sortedRows1.get(numSortedRows1 - 1), sortedRows2.get(0)) <= 0)) {
+      return;
+    }
+    int numRowsToMerge = Math.min(numSortedRows1 + numSortedRows2, maxNumRows);
+    List<Object[]> mergedRows = new ArrayList<>(numRowsToMerge);
+    int i1 = 0;
+    int i2 = 0;
+    int numMergedRows = 0;
+    while (i1 < numSortedRows1 && i2 < numSortedRows2 && numMergedRows < numRowsToMerge) {
+      Object[] row1 = sortedRows1.get(i1);
+      Object[] row2 = sortedRows2.get(i2);
+      if (comparator.compare(row1, row2) <= 0) {
+        mergedRows.add(row1);
+        i1++;
+      } else {
+        mergedRows.add(row2);
+        i2++;
+      }
+      Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(numMergedRows++);
+    }
+    if (numMergedRows < numRowsToMerge) {
+      if (i1 < numSortedRows1) {
+        assert i2 == numSortedRows2;
+        mergedRows.addAll(sortedRows1.subList(i1, i1 + numRowsToMerge - numMergedRows));
+      } else {
+        assert i1 == numSortedRows1;
+        mergedRows.addAll(sortedRows2.subList(i2, i2 + numRowsToMerge - numMergedRows));
+      }
+    }
+    mergedBlock.setRows(mergedRows);
   }
 
   /**
@@ -227,16 +270,38 @@ public class SelectionOperatorUtils {
    *
    * @param rows {@link Collection} of selection rows.
    * @param dataSchema data schema.
+   * @param nullHandlingEnabled whether null handling is enabled.
    * @return data table.
-   * @throws Exception
+   * @throws IOException
    */
-  public static DataTable getDataTableFromRows(Collection<Object[]> rows, DataSchema dataSchema)
-      throws Exception {
+  public static DataTable getDataTableFromRows(Collection<Object[]> rows, DataSchema dataSchema,
+      boolean nullHandlingEnabled)
+      throws IOException {
     ColumnDataType[] storedColumnDataTypes = dataSchema.getStoredColumnDataTypes();
     int numColumns = storedColumnDataTypes.length;
 
-    DataTableBuilder dataTableBuilder = DataTableFactory.getDataTableBuilder(
-        dataSchema);
+    DataTableBuilder dataTableBuilder = DataTableBuilderFactory.getDataTableBuilder(dataSchema);
+    RoaringBitmap[] nullBitmaps = null;
+    if (nullHandlingEnabled) {
+      nullBitmaps = new RoaringBitmap[numColumns];
+      Object[] nullPlaceholders = new Object[numColumns];
+      for (int colId = 0; colId < numColumns; colId++) {
+        nullBitmaps[colId] = new RoaringBitmap();
+        nullPlaceholders[colId] = storedColumnDataTypes[colId].getNullPlaceholder();
+      }
+      int rowId = 0;
+      for (Object[] row : rows) {
+        for (int i = 0; i < numColumns; i++) {
+          Object columnValue = row[i];
+          if (columnValue == null) {
+            row[i] = nullPlaceholders[i];
+            nullBitmaps[i].add(rowId);
+          }
+        }
+        rowId++;
+      }
+    }
+
     for (Object[] row : rows) {
       dataTableBuilder.startRow();
       for (int i = 0; i < numColumns; i++) {
@@ -321,6 +386,11 @@ public class SelectionOperatorUtils {
       dataTableBuilder.finishRow();
     }
 
+    if (nullHandlingEnabled) {
+      for (int colId = 0; colId < numColumns; colId++) {
+        dataTableBuilder.setNullRowIds(nullBitmaps[colId]);
+      }
+    }
     return dataTableBuilder.build();
   }
 
@@ -390,18 +460,54 @@ public class SelectionOperatorUtils {
   }
 
   /**
+   * Extract a selection row from {@link DataTable} with potential null values. (Broker side)
+   *
+   * @param dataTable data table.
+   * @param rowId row id.
+   * @return selection row.
+   */
+  public static Object[] extractRowFromDataTableWithNullHandling(DataTable dataTable, int rowId,
+      RoaringBitmap[] nullBitmaps) {
+    Object[] row = extractRowFromDataTable(dataTable, rowId);
+    for (int colId = 0; colId < nullBitmaps.length; colId++) {
+      if (nullBitmaps[colId] != null && nullBitmaps[colId].contains(rowId)) {
+        row[colId] = null;
+      }
+    }
+    return row;
+  }
+
+  /**
    * Reduces a collection of {@link DataTable}s to selection rows for selection queries without <code>ORDER BY</code>.
    * (Broker side)
    */
-  public static List<Object[]> reduceWithoutOrdering(Collection<DataTable> dataTables, int limit) {
+  public static List<Object[]> reduceWithoutOrdering(Collection<DataTable> dataTables, int limit,
+      boolean nullHandlingEnabled) {
     List<Object[]> rows = new ArrayList<>(Math.min(limit, SelectionOperatorUtils.MAX_ROW_HOLDER_INITIAL_CAPACITY));
     for (DataTable dataTable : dataTables) {
+      int numColumns = dataTable.getDataSchema().size();
       int numRows = dataTable.getNumberOfRows();
-      for (int rowId = 0; rowId < numRows; rowId++) {
-        if (rows.size() < limit) {
-          rows.add(extractRowFromDataTable(dataTable, rowId));
-        } else {
-          return rows;
+      if (nullHandlingEnabled) {
+        RoaringBitmap[] nullBitmaps = new RoaringBitmap[numColumns];
+        for (int coldId = 0; coldId < numColumns; coldId++) {
+          nullBitmaps[coldId] = dataTable.getNullRowIds(coldId);
+        }
+        for (int rowId = 0; rowId < numRows; rowId++) {
+          if (rows.size() < limit) {
+            rows.add(extractRowFromDataTableWithNullHandling(dataTable, rowId, nullBitmaps));
+          } else {
+            break;
+          }
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rowId);
+        }
+      } else {
+        for (int rowId = 0; rowId < numRows; rowId++) {
+          if (rows.size() < limit) {
+            rows.add(extractRowFromDataTable(dataTable, rowId));
+          } else {
+            break;
+          }
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rowId);
         }
       }
     }
@@ -450,7 +556,10 @@ public class SelectionOperatorUtils {
       Object[] resultRow = new Object[numColumns];
       for (int i = 0; i < numColumns; i++) {
         int index = (columnNameToIndexMap != null) ? columnNameToIndexMap.get(selectionColumns.get(i)) : i;
-        resultRow[i] = resultColumnDataTypes[i].convertAndFormat(row[index]);
+        Object value = row[index];
+        if (value != null) {
+          resultRow[i] = resultColumnDataTypes[i].convertAndFormat(value);
+        }
       }
       resultRows.add(resultRow);
     }
@@ -485,6 +594,86 @@ public class SelectionOperatorUtils {
   }
 
   /**
+   * Helper method to get the type-compatible {@link Comparator} for selection rows. (Inter segment)
+   * <p>Type-compatible comparator allows compatible types to compare with each other.
+   *
+   * @return flexible {@link Comparator} for selection rows.
+   */
+  public static Comparator<Object[]> getTypeCompatibleComparator(List<OrderByExpressionContext> orderByExpressions,
+      DataSchema dataSchema, boolean isNullHandlingEnabled) {
+    ColumnDataType[] columnDataTypes = dataSchema.getColumnDataTypes();
+
+    // Compare all single-value columns
+    int numOrderByExpressions = orderByExpressions.size();
+    List<Integer> valueIndexList = new ArrayList<>(numOrderByExpressions);
+    for (int i = 0; i < numOrderByExpressions; i++) {
+      if (!columnDataTypes[i].isArray()) {
+        valueIndexList.add(i);
+      }
+    }
+
+    int numValuesToCompare = valueIndexList.size();
+    int[] valueIndices = new int[numValuesToCompare];
+    boolean[] useDoubleComparison = new boolean[numValuesToCompare];
+    // Use multiplier -1 or 1 to control ascending/descending order
+    int[] multipliers = new int[numValuesToCompare];
+    for (int i = 0; i < numValuesToCompare; i++) {
+      int valueIndex = valueIndexList.get(i);
+      valueIndices[i] = valueIndex;
+      if (columnDataTypes[valueIndex].isNumber()) {
+        useDoubleComparison[i] = true;
+      }
+      multipliers[i] = orderByExpressions.get(valueIndex).isAsc() ? -1 : 1;
+    }
+
+    if (isNullHandlingEnabled) {
+      return (o1, o2) -> {
+        for (int i = 0; i < numValuesToCompare; i++) {
+          int index = valueIndices[i];
+          Object v1 = o1[index];
+          Object v2 = o2[index];
+          if (v1 == null) {
+            // The default null ordering is: 'NULLS LAST'.
+            return v2 == null ? 0 : -multipliers[i];
+          } else if (v2 == null) {
+            return multipliers[i];
+          }
+          int result;
+          if (useDoubleComparison[i]) {
+            result = Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue());
+          } else {
+            //noinspection unchecked
+            result = ((Comparable) v1).compareTo(v2);
+          }
+          if (result != 0) {
+            return result * multipliers[i];
+          }
+        }
+        return 0;
+      };
+    } else {
+      return (o1, o2) -> {
+        for (int i = 0; i < numValuesToCompare; i++) {
+          int index = valueIndices[i];
+          Object v1 = o1[index];
+          Object v2 = o2[index];
+          int result;
+          if (useDoubleComparison[i]) {
+            result = Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue());
+          } else {
+            //noinspection unchecked
+            result = ((Comparable) v1).compareTo(v2);
+          }
+          if (result != 0) {
+            return result * multipliers[i];
+          }
+        }
+        return 0;
+      };
+    }
+  }
+
+  /**
    * Helper method to add a value to a {@link PriorityQueue}.
    *
    * @param value value to be added.
@@ -499,5 +688,20 @@ public class SelectionOperatorUtils {
       queue.poll();
       queue.offer(value);
     }
+  }
+
+  public static DataSchema getSchemaForProjection(DataSchema dataSchema, int[] columnIndices) {
+    int numColumns = columnIndices.length;
+
+    String[] columnNames = dataSchema.getColumnNames();
+    ColumnDataType[] columnDataTypes = dataSchema.getColumnDataTypes();
+    String[] resultColumnNames = new String[numColumns];
+    ColumnDataType[] resultColumnDataTypes = new ColumnDataType[numColumns];
+    for (int i = 0; i < numColumns; i++) {
+      int columnIndex = columnIndices[i];
+      resultColumnNames[i] = columnNames[columnIndex];
+      resultColumnDataTypes[i] = columnDataTypes[columnIndex];
+    }
+    return new DataSchema(resultColumnNames, resultColumnDataTypes);
   }
 }

@@ -23,11 +23,14 @@ import java.util.Collections;
 import org.apache.pinot.common.function.FunctionRegistry;
 import org.apache.pinot.segment.local.function.InbuiltFunctionEvaluator;
 import org.apache.pinot.spi.data.readers.GenericRow;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
 
 public class InbuiltFunctionEvaluatorTest {
@@ -53,6 +56,21 @@ public class InbuiltFunctionEvaluatorTest {
     GenericRow row = new GenericRow();
     for (int i = 0; i < 5; i++) {
       assertEquals(evaluator.evaluate(row), "testValue");
+    }
+  }
+
+  @Test
+  public void testScalarWrapperWithReservedKeywordExpression() {
+    String expression = "dateTrunc('MONTH', \"date\")";
+    InbuiltFunctionEvaluator evaluator = new InbuiltFunctionEvaluator(expression);
+    assertEquals(evaluator.getArguments(), Collections.singletonList("date"));
+    GenericRow row = new GenericRow();
+    for (int i = 1; i < 9; i++) {
+      DateTime dt = new DateTime(String.format("2020-0%d-15T12:00:00", i));
+      long millis = dt.getMillis();
+      DateTime truncDt = dt.withZone(DateTimeZone.UTC).withDayOfMonth(1).withHourOfDay(0).withMillisOfDay(0);
+      row.putValue("date", millis);
+      assertEquals(evaluator.evaluate(row), truncDt.getMillis());
     }
   }
 
@@ -113,7 +131,7 @@ public class InbuiltFunctionEvaluatorTest {
       throws Exception {
     MyFunc myFunc = new MyFunc();
     Method method = myFunc.getClass().getDeclaredMethod("appendToStringAndReturn", String.class);
-    FunctionRegistry.registerFunction(method, false);
+    FunctionRegistry.registerFunction(method, false, false);
     String expression = "appendToStringAndReturn('test ')";
     InbuiltFunctionEvaluator evaluator = new InbuiltFunctionEvaluator(expression);
     assertTrue(evaluator.getArguments().isEmpty());
@@ -137,6 +155,21 @@ public class InbuiltFunctionEvaluatorTest {
       InbuiltFunctionEvaluator evaluator = new InbuiltFunctionEvaluator(expression);
       GenericRow row = new GenericRow();
       assertNull(evaluator.evaluate(row));
+    }
+  }
+
+  @Test
+  public void testPlaceholderFunctionShouldNotBeRegistered()
+      throws Exception {
+    GenericRow row = new GenericRow();
+    row.putValue("testColumn", "testValue");
+    String expression = "text_match(testColumn, 'pattern')";
+    try {
+      InbuiltFunctionEvaluator evaluator = new InbuiltFunctionEvaluator(expression);
+      evaluator.evaluate(row);
+      fail();
+    } catch (Throwable t) {
+      assertTrue(t.getMessage().contains("text_match"));
     }
   }
 

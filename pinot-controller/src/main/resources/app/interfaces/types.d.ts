@@ -22,6 +22,7 @@ declare module 'Models' {
     records: Array<Array<string | number | boolean>>;
     columns: Array<string>;
     error?: string;
+    isLoading? : boolean
   };
 
   type SchemaDetails = {
@@ -83,6 +84,8 @@ declare module 'Models' {
   export type QueryTables = {
     tables: Array<string>;
   };
+
+  export type QuerySchemas = Array<string>;
 
   export type TableSchema = {
     dimensionFieldSpecs: Array<schema>;
@@ -177,5 +180,61 @@ declare module 'Models' {
 
   export type UserList = {
     users: UserObject
+  }
+
+  export interface TaskProgressResponse {
+    [key: string]: TaskProgressStatus[] | string;
+  }
+
+  export interface TaskProgressStatus {
+    ts: number,
+    status: string
+  }
+
+  export type TableSegmentJobs = {
+    [key: string]: {
+      jobId: string,
+      messageCount: number,
+      submissionTimeMs: number,
+      jobType: string,
+      tableName: string
+    }
+  }
+  
+  export interface TaskRuntimeConfig {
+    ConcurrentTasksPerWorker: string,
+    TaskTimeoutMs: string,
+    TaskExpireTimeMs: string,
+    MinionWorkerGroupTag: string
+  }
+
+  export interface SegmentDebugDetails {
+    segmentName: string;
+    serverState: {
+      [key: string]: {
+        idealState: SEGMENT_STATUS,
+        externalView: SEGMENT_STATUS,
+        errorInfo?: {
+          timeStamp: string,
+          errorMessage: string,
+          stackTrace: string
+        }
+      }
+    }
+  }
+
+  export type TableSortFunction = (a: any, b: any, column: string, index: number, order: boolean) => number;
+
+  export const enum SEGMENT_STATUS {
+    ONLINE = "ONLINE",
+    OFFLINE = "OFFLINE",
+    CONSUMING = "CONSUMING",
+    ERROR = "ERROR"
+  } 
+
+  export const enum DISPLAY_SEGMENT_STATUS {
+    BAD = "BAD",
+    GOOD = "GOOD",
+    UPDATING = "UPDATING",
   }
 }

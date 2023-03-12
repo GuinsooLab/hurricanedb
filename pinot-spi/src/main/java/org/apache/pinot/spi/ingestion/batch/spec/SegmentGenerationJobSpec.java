@@ -46,6 +46,12 @@ public class SegmentGenerationJobSpec implements Serializable {
   private String _inputDirURI;
 
   /**
+   * If true, search input files recursively from root directly specified in _inputDirURI.
+   */
+  // TODO: set the default value to false after all clients are aware of this.
+  private boolean _searchRecursively = true;
+
+  /**
    * include file name pattern, supported glob pattern.
    * Sample usage:
    *    'glob:*.avro' will include all avro files just under the inputDirURI, not sub directories;
@@ -133,6 +139,11 @@ public class SegmentGenerationJobSpec implements Serializable {
    */
   private String _authToken;
 
+  /**
+   * Create a separated metadata only tar gz file to reduce the data transfer of segment metadata push job.
+   */
+  private boolean _createMetadataTarGz;
+
   public ExecutionFrameworkSpec getExecutionFrameworkSpec() {
     return _executionFrameworkSpec;
   }
@@ -159,6 +170,14 @@ public class SegmentGenerationJobSpec implements Serializable {
 
   public void setInputDirURI(String inputDirURI) {
     _inputDirURI = inputDirURI;
+  }
+
+  public boolean isSearchRecursively() {
+    return _searchRecursively;
+  }
+
+  public void setSearchRecursively(boolean searchRecursively) {
+    _searchRecursively = searchRecursively;
   }
 
   public String getIncludeFileNamePattern() {
@@ -295,6 +314,14 @@ public class SegmentGenerationJobSpec implements Serializable {
 
   public void setAuthToken(String authToken) {
     _authToken = authToken;
+  }
+
+  public boolean isCreateMetadataTarGz() {
+    return _createMetadataTarGz;
+  }
+
+  public void setCreateMetadataTarGz(boolean createMetadataTarGz) {
+    _createMetadataTarGz = createMetadataTarGz;
   }
 
   public String toJSONString(boolean removeSensitiveKeys) {

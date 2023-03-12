@@ -19,44 +19,25 @@
 package org.apache.pinot.segment.local.startree.v2.store;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
-import java.nio.ByteOrder;
 import java.util.List;
 import java.util.Map;
 import org.apache.pinot.segment.spi.index.column.ColumnIndexContainer;
 import org.apache.pinot.segment.spi.index.metadata.SegmentMetadataImpl;
 import org.apache.pinot.segment.spi.index.startree.StarTreeV2;
-import org.apache.pinot.segment.spi.index.startree.StarTreeV2Constants;
-import org.apache.pinot.segment.spi.memory.PinotDataBuffer;
-import org.apache.pinot.spi.utils.ReadMode;
-
-import static org.apache.pinot.segment.local.startree.v2.store.StarTreeIndexMapUtils.IndexKey;
-import static org.apache.pinot.segment.local.startree.v2.store.StarTreeIndexMapUtils.IndexValue;
+import org.apache.pinot.segment.spi.store.SegmentDirectory;
 
 
 /**
  * The {@code StarTreeIndexContainer} class contains the indexes for multiple star-trees.
  */
 public class StarTreeIndexContainer implements Closeable {
-  private final PinotDataBuffer _dataBuffer;
   private final List<StarTreeV2> _starTrees;
 
-  public StarTreeIndexContainer(File segmentDirectory, SegmentMetadataImpl segmentMetadata,
-      Map<String, ColumnIndexContainer> indexContainerMap, ReadMode readMode)
+  public StarTreeIndexContainer(SegmentDirectory.Reader segmentReader, SegmentMetadataImpl segmentMetadata,
+      Map<String, ColumnIndexContainer> indexContainerMap)
       throws IOException {
-    File indexFile = new File(segmentDirectory, StarTreeV2Constants.INDEX_FILE_NAME);
-    if (readMode == ReadMode.heap) {
-      _dataBuffer = PinotDataBuffer.loadFile(indexFile, 0, indexFile.length(), ByteOrder.LITTLE_ENDIAN,
-          "Star-tree V2 data buffer");
-    } else {
-      _dataBuffer = PinotDataBuffer.mapFile(indexFile, true, 0, indexFile.length(), ByteOrder.LITTLE_ENDIAN,
-          "Star-tree V2 data buffer");
-    }
-    File indexMapFile = new File(segmentDirectory, StarTreeV2Constants.INDEX_MAP_FILE_NAME);
-    List<Map<IndexKey, IndexValue>> indexMapList =
-        StarTreeIndexMapUtils.loadFromFile(indexMapFile, segmentMetadata.getStarTreeV2MetadataList().size());
-    _starTrees = StarTreeLoaderUtils.loadStarTreeV2(_dataBuffer, indexMapList, segmentMetadata, indexContainerMap);
+    _starTrees = StarTreeLoaderUtils.loadStarTreeV2(segmentReader, segmentMetadata, indexContainerMap);
   }
 
   public List<StarTreeV2> getStarTrees() {
@@ -66,6 +47,10 @@ public class StarTreeIndexContainer implements Closeable {
   @Override
   public void close()
       throws IOException {
-    _dataBuffer.close();
+    // The startree index data buffer is owned by segment reader, but still need to close those startree instances as
+    // they have created their own fwd value readers.
+    for (StarTreeV2 starTree : _starTrees) {
+      starTree.close();
+    }
   }
 }

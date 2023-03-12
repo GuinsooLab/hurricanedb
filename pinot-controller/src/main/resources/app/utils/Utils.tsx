@@ -22,6 +22,7 @@ import React from 'react';
 import ReactDiffViewer, {DiffMethod} from 'react-diff-viewer';
 import { map, isEqual, findIndex, findLast } from 'lodash';
 import app_state from '../app_state';
+import {DISPLAY_SEGMENT_STATUS, SEGMENT_STATUS, TableData} from 'Models';
 
 const sortArray = function (sortingArr, keyName, ascendingFlag) {
   if (ascendingFlag) {
@@ -46,13 +47,13 @@ const sortArray = function (sortingArr, keyName, ascendingFlag) {
   });
 };
 
-const tableFormat = (data) => {
+const tableFormat = (data: TableData): Array<{ [key: string]: any }> => {
   const rows = data.records;
   const header = data.columns;
 
-  const results = [];
+  const results: Array<{ [key: string]: any }> = [];
   rows.forEach((singleRow) => {
-    const obj = {};
+    const obj: { [key: string]: any } = {};
     singleRow.forEach((val: any, index: number) => {
       obj[header[index]+app_state.columnNameSeparator+index] = val;
     });
@@ -62,55 +63,39 @@ const tableFormat = (data) => {
 };
 
 const getSegmentStatus = (idealStateObj, externalViewObj) => {
-  const idealSegmentKeys = Object.keys(idealStateObj);
-  const idealSegmentCount = idealSegmentKeys.length;
+  const tableStatus = getDisplayTableStatus(idealStateObj, externalViewObj);
+  const statusMismatchDiffComponent = (
+    <ReactDiffViewer
+      oldValue={JSON.stringify(idealStateObj, null, 2)}
+      newValue={JSON.stringify(externalViewObj, null, 2)}
+      splitView={true}
+      showDiffOnly={true}
+      leftTitle={"Ideal State"}
+      rightTitle={"External View"}
+      compareMethod={DiffMethod.WORDS}
+    />
+  );
 
-  const externalSegmentKeys = Object.keys(externalViewObj);
-  const externalSegmentCount = externalSegmentKeys.length;
-
-  if (idealSegmentCount !== externalSegmentCount) {
-    let segmentStatusComponent = (
-        <ReactDiffViewer
-            oldValue={JSON.stringify(idealStateObj, null, 2)}
-            newValue={JSON.stringify(externalViewObj, null, 2)}
-            splitView={true}
-            showDiffOnly={true}
-            leftTitle={"Ideal State"}
-            rightTitle={"External View"}
-            compareMethod={DiffMethod.WORDS}
-        />
-    )
-    return {
-      value: 'Bad',
-      tooltip: `Ideal Segment Count: ${idealSegmentCount} does not match external Segment Count: ${externalSegmentCount}`,
-      component: segmentStatusComponent,
-    };
+  if(tableStatus === DISPLAY_SEGMENT_STATUS.BAD) {
+    return ({
+      value: tableStatus,
+      tooltip: "One or more segments in this table are in bad state. Click the status to view more details.",
+      component: statusMismatchDiffComponent,
+    })
   }
 
-  let segmentStatus = {value: 'Good', tooltip: null, component: null};
-  idealSegmentKeys.map((segmentKey) => {
-    if (segmentStatus.value === 'Good') {
-      if (!isEqual(idealStateObj[segmentKey], externalViewObj[segmentKey])) {
-        let segmentStatusComponent = (
-            <ReactDiffViewer
-                oldValue={JSON.stringify(idealStateObj, null, 2)}
-                newValue={JSON.stringify(externalViewObj, null, 2)}
-                splitView={true}
-                showDiffOnly={true}
-                leftTitle={"Ideal State"}
-                rightTitle={"External View"}
-                compareMethod={DiffMethod.WORDS}
-            />
-        )
-        segmentStatus = {
-          value: 'Bad',
-          tooltip: "Ideal Status does not match external status",
-          component: segmentStatusComponent
-        };
-      }
-    }
+  if(tableStatus === DISPLAY_SEGMENT_STATUS.UPDATING) {
+    return ({
+      value: tableStatus,
+      tooltip: "One or more segments in this table are in updating state. Click the status to view more details.",
+      component: statusMismatchDiffComponent,
+    })
+  }
+
+  return ({
+    value: tableStatus,
+    tooltip: "All segments in this table are in good state.",
   });
-  return segmentStatus;
 };
 
 const findNestedObj = (entireObj, keyToFind, valToFind) => {
@@ -343,6 +328,49 @@ const splitStringByLastUnderscore = (str: string) => {
   let beforeUnderscore = str.substring(0, str.lastIndexOf("_"));
   let afterUnderscore = str.substring(str.lastIndexOf("_") + 1, str.length);
   return [beforeUnderscore, afterUnderscore];
+}
+
+export const getDisplayTableStatus = (idealStateObj, externalViewObj): DISPLAY_SEGMENT_STATUS => {
+  const segmentStatusArr = [];
+  Object.keys(idealStateObj).forEach((key) => {
+    segmentStatusArr.push(getDisplaySegmentStatus(idealStateObj[key], externalViewObj[key]))
+  })
+
+  if(segmentStatusArr.includes(DISPLAY_SEGMENT_STATUS.BAD)) {
+    return DISPLAY_SEGMENT_STATUS.BAD;
+  }
+  if(segmentStatusArr.includes(DISPLAY_SEGMENT_STATUS.UPDATING)) {
+    return DISPLAY_SEGMENT_STATUS.UPDATING;
+  }
+  return DISPLAY_SEGMENT_STATUS.GOOD;
+}
+
+export const getDisplaySegmentStatus = (idealState, externalView): DISPLAY_SEGMENT_STATUS => {
+  const externalViewStatesArray = Object.values(externalView || {});
+
+  // if EV contains ERROR state then segment is in Bad state
+  if(externalViewStatesArray.includes(SEGMENT_STATUS.ERROR)) {
+    return DISPLAY_SEGMENT_STATUS.BAD;
+  }
+
+  // if EV status is CONSUMING or ONLINE then segment is in Good state
+  if(externalViewStatesArray.every((status) => status === SEGMENT_STATUS.CONSUMING || status === SEGMENT_STATUS.ONLINE) && isEqual(idealState, externalView)) {
+    return DISPLAY_SEGMENT_STATUS.GOOD;
+  }
+
+  // If EV state is OFFLINE and EV matches IS then segment is in Good state.
+  if(externalViewStatesArray.includes(SEGMENT_STATUS.OFFLINE) && isEqual(idealState, externalView)) {
+    return DISPLAY_SEGMENT_STATUS.GOOD;
+  }
+
+  // If EV is empty or EV state is OFFLINE and does not matches IS then segment is in Partial state.
+  // PARTIAL state can also be interpreted as we're waiting for segments to converge
+  if(externalViewStatesArray.length === 0 || externalViewStatesArray.includes(SEGMENT_STATUS.OFFLINE) && !isEqual(idealState, externalView)) {
+    return DISPLAY_SEGMENT_STATUS.UPDATING;
+  }
+
+  // does not match any condition -> assume PARTIAL state as we are waiting for segments to converge 
+  return DISPLAY_SEGMENT_STATUS.UPDATING;
 }
 
 export default {

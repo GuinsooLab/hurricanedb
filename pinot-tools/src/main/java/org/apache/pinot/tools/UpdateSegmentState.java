@@ -21,13 +21,12 @@ package org.apache.pinot.tools;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import org.apache.helix.PropertyPathConfig;
-import org.apache.helix.PropertyType;
-import org.apache.helix.ZNRecord;
+import org.apache.helix.PropertyPathBuilder;
 import org.apache.helix.manager.zk.ZKHelixAdmin;
-import org.apache.helix.manager.zk.ZNRecordSerializer;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.datamodel.serializer.ZNRecordSerializer;
 import org.apache.pinot.common.utils.config.TableConfigUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.utils.CommonConstants;
@@ -61,7 +60,7 @@ public class UpdateSegmentState extends AbstractBaseCommand implements Command {
   @CommandLine.Option(names = {"-fix"}, required = false, description = "Update IDEALSTATE values (OFFLINE->ONLINE).")
   private boolean _fix = false;
 
-  @CommandLine.Option(names = {"-help", "-h", "--h", "--help"}, required = false, help = true,
+  @CommandLine.Option(names = {"-help", "-h", "--h", "--help"}, required = false, usageHelp = true,
       description = "Print this message.")
   private boolean _help = false;
 
@@ -131,7 +130,7 @@ public class UpdateSegmentState extends AbstractBaseCommand implements Command {
     LOGGER.info("Trying to connect to " + _zkAddress + " cluster " + _clusterName);
     _helixAdmin = new ZKHelixAdmin(_zkAddress);
     ZNRecordSerializer serializer = new ZNRecordSerializer();
-    String path = PropertyPathConfig.getPath(PropertyType.PROPERTYSTORE, _clusterName);
+    String path = PropertyPathBuilder.propertyStore(_clusterName);
     _propertyStore = new ZkHelixPropertyStore<>(_zkAddress, serializer, path);
   }
 

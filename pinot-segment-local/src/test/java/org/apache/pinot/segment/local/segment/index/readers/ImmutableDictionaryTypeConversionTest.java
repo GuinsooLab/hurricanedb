@@ -39,6 +39,7 @@ import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.testng.Assert.assertEquals;
 
 
@@ -67,6 +68,7 @@ public class ImmutableDictionaryTypeConversionTest {
   private int _bigDecimalByteLength;
   private String[] _stringValues;
   private ByteArray[] _bytesValues;
+  private ByteArray[] _utf8BytesValues;
 
   private int[] _dictIds;
   private int[] _intValuesBuffer;
@@ -108,8 +110,10 @@ public class ImmutableDictionaryTypeConversionTest {
     ArrayCopyUtils.copy(_intValues, _stringValues, NUM_VALUES);
 
     _bytesValues = new ByteArray[NUM_VALUES];
+    _utf8BytesValues = new ByteArray[NUM_VALUES];
     for (int i = 0; i < NUM_VALUES; i++) {
       _bytesValues[i] = BytesUtils.toByteArray(_stringValues[i]);
+      _utf8BytesValues[i] = new ByteArray(_stringValues[i].getBytes(UTF_8));
     }
 
     try (SegmentDictionaryCreator dictionaryCreator = new SegmentDictionaryCreator(
@@ -308,8 +312,7 @@ public class ImmutableDictionaryTypeConversionTest {
   public void testStringDictionary()
       throws Exception {
     try (StringDictionary stringDictionary = new StringDictionary(PinotDataBuffer.mapReadOnlyBigEndianFile(
-        new File(TEMP_DIR, STRING_COLUMN_NAME + V1Constants.Dict.FILE_EXTENSION)), NUM_VALUES, STRING_LENGTH,
-        (byte) 0)) {
+        new File(TEMP_DIR, STRING_COLUMN_NAME + V1Constants.Dict.FILE_EXTENSION)), NUM_VALUES, STRING_LENGTH)) {
       testStringDictionary(stringDictionary);
     }
   }
@@ -319,8 +322,7 @@ public class ImmutableDictionaryTypeConversionTest {
       throws Exception {
     try (OnHeapStringDictionary onHeapStringDictionary = new OnHeapStringDictionary(
         PinotDataBuffer.mapReadOnlyBigEndianFile(
-            new File(TEMP_DIR, STRING_COLUMN_NAME + V1Constants.Dict.FILE_EXTENSION)), NUM_VALUES, STRING_LENGTH,
-        (byte) 0)) {
+            new File(TEMP_DIR, STRING_COLUMN_NAME + V1Constants.Dict.FILE_EXTENSION)), NUM_VALUES, STRING_LENGTH)) {
       testStringDictionary(onHeapStringDictionary);
     }
   }
@@ -333,7 +335,7 @@ public class ImmutableDictionaryTypeConversionTest {
       assertEquals(dictionary.getFloatValue(i), _floatValues[i]);
       assertEquals(dictionary.getDoubleValue(i), _doubleValues[i]);
       assertEquals(dictionary.getStringValue(i), _stringValues[i]);
-      assertEquals(dictionary.getBytesValue(i), _bytesValues[i].getBytes());
+      assertEquals(dictionary.getBytesValue(i), _utf8BytesValues[i].getBytes());
     }
     dictionary.readIntValues(_dictIds, NUM_VALUES, _intValuesBuffer);
     Assert.assertEquals(_intValuesBuffer, _intValues);
@@ -347,7 +349,7 @@ public class ImmutableDictionaryTypeConversionTest {
     Assert.assertEquals(_stringValuesBuffer, _stringValues);
     dictionary.readBytesValues(_dictIds, NUM_VALUES, _bytesValuesBuffer);
     for (int i = 0; i < NUM_VALUES; i++) {
-      Assert.assertEquals(_bytesValuesBuffer[i], _bytesValues[i].getBytes());
+      Assert.assertEquals(_bytesValuesBuffer[i], _utf8BytesValues[i].getBytes());
     }
   }
 

@@ -48,7 +48,8 @@ public class GapfillFilterHandler implements ValueExtractorFactory {
       // TODO: Please refer to {@link PostAggregationHandler} on how to handle the index for aggregation queries.
       _indexes.put(_dataSchema.getColumnName(i), i);
     }
-    _rowMatcher = RowMatcherFactory.getRowMatcher(filter, this);
+    // TODO: support proper null handling in GapfillFilterHandler.
+    _rowMatcher = RowMatcherFactory.getRowMatcher(filter, this, false);
   }
 
   /**
@@ -66,7 +67,7 @@ public class GapfillFilterHandler implements ValueExtractorFactory {
     expression = GapfillUtils.stripGapfill(expression);
     if (expression.getType() == ExpressionContext.Type.LITERAL) {
       // Literal
-      return new LiteralValueExtractor(expression.getLiteral());
+      return new LiteralValueExtractor(expression.getLiteralString());
     }
 
     if (expression.getType() == ExpressionContext.Type.IDENTIFIER) {

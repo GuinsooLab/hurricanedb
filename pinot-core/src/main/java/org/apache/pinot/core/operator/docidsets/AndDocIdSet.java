@@ -19,8 +19,13 @@
 package org.apache.pinot.core.operator.docidsets;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import org.apache.commons.collections.MapUtils;
+import org.apache.pinot.common.utils.config.QueryOptionsUtils;
 import org.apache.pinot.core.common.BlockDocIdIterator;
+import org.apache.pinot.core.common.BlockDocIdSet;
 import org.apache.pinot.core.operator.dociditerators.AndDocIdIterator;
 import org.apache.pinot.core.operator.dociditerators.BitmapBasedDocIdIterator;
 import org.apache.pinot.core.operator.dociditerators.RangelessBitmapDocIdIterator;
@@ -33,9 +38,9 @@ import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
 
 /**
- * The FilterBlockDocIdSet to perform AND on all child FilterBlockDocIdSets.
+ * The BlockDocIdSet to perform AND on all child BlockDocIdSets.
  * <p>The AndBlockDocIdSet will construct the BlockDocIdIterator based on the BlockDocIdIterators from the child
- * FilterBlockDocIdSets:
+ * BlockDocIdSets:
  * <ul>
  *   <li>
  *     When there are at least one index-base BlockDocIdIterator (SortedDocIdIterator or BitmapBasedDocIdIterator) and
@@ -49,17 +54,20 @@ import org.roaringbitmap.buffer.MutableRoaringBitmap;
  *   </li>
  * </ul>
  */
-public final class AndDocIdSet implements FilterBlockDocIdSet {
-  private final List<FilterBlockDocIdSet> _docIdSets;
+public final class AndDocIdSet implements BlockDocIdSet {
+  private final List<BlockDocIdSet> _docIdSets;
+  private final boolean _cardinalityBasedRankingForScan;
 
-  public AndDocIdSet(List<FilterBlockDocIdSet> docIdSets) {
+  public AndDocIdSet(List<BlockDocIdSet> docIdSets, Map<String, String> queryOptions) {
     _docIdSets = docIdSets;
+    _cardinalityBasedRankingForScan =
+        !MapUtils.isEmpty(queryOptions) && QueryOptionsUtils.isAndScanReorderingEnabled(queryOptions);
   }
 
   @Override
   public BlockDocIdIterator iterator() {
     int numDocIdSets = _docIdSets.size();
-    // NOTE: Keep the order of FilterBlockDocIdSets to preserve the order decided within FilterOperatorUtils.
+    // NOTE: Keep the order of BlockDocIdSets to preserve the order decided within FilterOperatorUtils.
     // TODO: Consider deciding the order based on the stats of BlockDocIdIterators
     BlockDocIdIterator[] allDocIdIterators = new BlockDocIdIterator[numDocIdSets];
     List<SortedDocIdIterator> sortedDocIdIterators = new ArrayList<>();
@@ -79,6 +87,21 @@ public final class AndDocIdSet implements FilterBlockDocIdSet {
         remainingDocIdIterators.add(docIdIterator);
       }
     }
+
+    // evaluate the bitmaps in the order of the lowest matching num docIds comes first, so that we minimize the number
+    // of containers (range) for comparison from the beginning, as will minimize the effort of bitmap AND application
+    bitmapBasedDocIdIterators.sort(Comparator.comparing(x -> x.getDocIds().getCardinality()));
+
+    // Evaluate the scan based operator with the highest cardinality coming first, this potentially reduce the range of
+    // scanning from the beginning. Automatically place N/A cardinality column (negative infinity) to the back as we
+    // want to evaluate these unestimated predicates in the end.
+    // TODO: 1. remainingDocIdIterators currently doesn't report cardinality; therefore, it cannot be
+    //          prioritized even if it provides high effective cardinality, one way to do this is to let AND/OR
+    //          DocIdIterators bubble up cardinality for the sort to happen recursively for nested AND-OR predicates
+    if (_cardinalityBasedRankingForScan) {
+      scanBasedDocIdIterators.sort(Comparator.comparing(x -> (-x.getEstimatedCardinality(true))));
+    }
+
     int numSortedDocIdIterators = sortedDocIdIterators.size();
     int numBitmapBasedDocIdIterators = bitmapBasedDocIdIterators.size();
     int numScanBasedDocIdIterators = scanBasedDocIdIterators.size();
@@ -148,7 +171,7 @@ public final class AndDocIdSet implements FilterBlockDocIdSet {
   @Override
   public long getNumEntriesScannedInFilter() {
     long numEntriesScannedInFilter = 0L;
-    for (FilterBlockDocIdSet child : _docIdSets) {
+    for (BlockDocIdSet child : _docIdSets) {
       numEntriesScannedInFilter += child.getNumEntriesScannedInFilter();
     }
     return numEntriesScannedInFilter;

@@ -27,12 +27,13 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.ThreadSafe;
 import org.apache.pinot.common.config.NettyConfig;
 import org.apache.pinot.common.config.TlsConfig;
+import org.apache.pinot.common.datatable.DataTable;
+import org.apache.pinot.common.datatable.DataTable.MetadataKey;
 import org.apache.pinot.common.metrics.BrokerMeter;
 import org.apache.pinot.common.metrics.BrokerMetrics;
 import org.apache.pinot.common.request.BrokerRequest;
 import org.apache.pinot.common.request.InstanceRequest;
-import org.apache.pinot.common.utils.DataTable;
-import org.apache.pinot.common.utils.DataTable.MetadataKey;
+import org.apache.pinot.core.transport.server.routing.stats.ServerRoutingStatsManager;
 import org.apache.pinot.spi.config.table.TableType;
 import org.apache.pinot.spi.utils.CommonConstants;
 import org.slf4j.Logger;
@@ -53,15 +54,17 @@ public class QueryRouter {
   private final ServerChannels _serverChannels;
   private final ServerChannels _serverChannelsTls;
   private final ConcurrentHashMap<Long, AsyncQueryResponse> _asyncQueryResponseMap = new ConcurrentHashMap<>();
+  private final ServerRoutingStatsManager _serverRoutingStatsManager;
 
   /**
    * Creates an unsecured query router.
-   *
    * @param brokerId broker id
    * @param brokerMetrics broker metrics
+   * @param serverRoutingStatsManager
    */
-  public QueryRouter(String brokerId, BrokerMetrics brokerMetrics) {
-    this(brokerId, brokerMetrics, null, null);
+  public QueryRouter(String brokerId, BrokerMetrics brokerMetrics,
+      ServerRoutingStatsManager serverRoutingStatsManager) {
+    this(brokerId, brokerMetrics, null, null, serverRoutingStatsManager);
   }
 
   /**
@@ -73,11 +76,12 @@ public class QueryRouter {
    * @param tlsConfig TLS config
    */
   public QueryRouter(String brokerId, BrokerMetrics brokerMetrics, @Nullable NettyConfig nettyConfig,
-      @Nullable TlsConfig tlsConfig) {
+      @Nullable TlsConfig tlsConfig, ServerRoutingStatsManager serverRoutingStatsManager) {
     _brokerId = brokerId;
     _brokerMetrics = brokerMetrics;
     _serverChannels = new ServerChannels(this, brokerMetrics, nettyConfig, null);
     _serverChannelsTls = tlsConfig != null ? new ServerChannels(this, brokerMetrics, nettyConfig, tlsConfig) : null;
+    _serverRoutingStatsManager = serverRoutingStatsManager;
   }
 
   public AsyncQueryResponse submitQuery(long requestId, String rawTableName,
@@ -112,12 +116,17 @@ public class QueryRouter {
 
     // Create the asynchronous query response with the request map
     AsyncQueryResponse asyncQueryResponse =
-        new AsyncQueryResponse(this, requestId, requestMap.keySet(), System.currentTimeMillis(), timeoutMs);
+        new AsyncQueryResponse(this, requestId, requestMap.keySet(), System.currentTimeMillis(), timeoutMs,
+            _serverRoutingStatsManager);
     _asyncQueryResponseMap.put(requestId, asyncQueryResponse);
     for (Map.Entry<ServerRoutingInstance, InstanceRequest> entry : requestMap.entrySet()) {
       ServerRoutingInstance serverRoutingInstance = entry.getKey();
       ServerChannels serverChannels = serverRoutingInstance.isTlsEnabled() ? _serverChannelsTls : _serverChannels;
       try {
+        // Record stats related to query submission just before sending the request. Otherwise, if the response is
+        // received immediately, there's a possibility of updating query response stats before updating query
+        // submission stats.
+        _serverRoutingStatsManager.recordStatsAfterQuerySubmission(requestId, serverRoutingInstance.getInstanceId());
         serverChannels.sendRequest(rawTableName, asyncQueryResponse, serverRoutingInstance, entry.getValue(),
             timeoutMs);
         asyncQueryResponse.markRequestSubmitted(serverRoutingInstance);

@@ -22,6 +22,8 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import org.apache.pinot.common.utils.config.TierConfigUtils;
 import org.apache.pinot.spi.config.table.TableConfig;
 import org.apache.pinot.spi.config.table.TableType;
@@ -185,5 +187,42 @@ public class TierConfigUtilsTest {
     Assert.assertEquals(tierComparator.compare(tier6, tier7), 0);
     Assert.assertEquals(tierComparator.compare(tier6, tier5), -1);
     Assert.assertEquals(tierComparator.compare(tier4, tier7), 1);
+  }
+
+  @Test
+  public void testGetDataDirForTier() {
+    TableConfig tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("myTable").build();
+    try {
+      TierConfigUtils.getDataDirForTier(tableConfig, "tier1");
+    } catch (Exception e) {
+      Assert.assertEquals(e.getMessage(), "No dataDir for tier: tier1 for table: myTable_OFFLINE");
+    }
+    tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("myTable").setTierConfigList(Lists
+        .newArrayList(new TierConfig("myTier", TierFactory.TIME_SEGMENT_SELECTOR_TYPE, "10d", null,
+            TierFactory.PINOT_SERVER_STORAGE_TYPE, "tag_OFFLINE", null, null))).build();
+    try {
+      TierConfigUtils.getDataDirForTier(tableConfig, "tier1");
+    } catch (Exception e) {
+      Assert.assertEquals(e.getMessage(), "No dataDir for tier: tier1 for table: myTable_OFFLINE");
+    }
+    try {
+      TierConfigUtils.getDataDirForTier(tableConfig, "myTier");
+    } catch (Exception e) {
+      Assert.assertEquals(e.getMessage(), "No dataDir for tier: myTier for table: myTable_OFFLINE");
+    }
+    // Provide instance tierConfigs for the tier.
+    Map<String, Map<String, String>> instanceTierConfigs = new HashMap<>();
+    Map<String, String> tierCfgMap = new HashMap<>();
+    tierCfgMap.put("datadir", "/abc/xyz");
+    instanceTierConfigs.put("myTier", tierCfgMap);
+    String dataDir = TierConfigUtils.getDataDirForTier(tableConfig, "myTier", instanceTierConfigs);
+    Assert.assertEquals(dataDir, "/abc/xyz");
+    // Table tierConfigs overwrite those from instance tierConfigs.
+    tableConfig = new TableConfigBuilder(TableType.OFFLINE).setTableName("myTable").setTierConfigList(Lists
+        .newArrayList(new TierConfig("myTier", TierFactory.TIME_SEGMENT_SELECTOR_TYPE, "10d", null,
+            TierFactory.PINOT_SERVER_STORAGE_TYPE, "tag_OFFLINE", null,
+            Collections.singletonMap("dataDir", "/foo/bar")))).build();
+    dataDir = TierConfigUtils.getDataDirForTier(tableConfig, "myTier", instanceTierConfigs);
+    Assert.assertEquals(dataDir, "/foo/bar");
   }
 }

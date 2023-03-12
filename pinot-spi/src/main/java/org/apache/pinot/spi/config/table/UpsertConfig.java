@@ -18,13 +18,12 @@
  */
 package org.apache.pinot.spi.config.table;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
-import com.google.common.base.Preconditions;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Nullable;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.pinot.spi.config.BaseJsonConfig;
 
 
@@ -37,48 +36,47 @@ public class UpsertConfig extends BaseJsonConfig {
 
   public enum Strategy {
     // Todo: add CUSTOM strategies
-    APPEND, IGNORE, INCREMENT, OVERWRITE, UNION
+    APPEND, IGNORE, INCREMENT, MAX, MIN, OVERWRITE, UNION
   }
 
   @JsonPropertyDescription("Upsert mode.")
-  private final Mode _mode;
+  private Mode _mode;
 
   @JsonPropertyDescription("Function to hash the primary key.")
-  private final HashFunction _hashFunction;
+  private HashFunction _hashFunction = HashFunction.NONE;
 
   @JsonPropertyDescription("Partial update strategies.")
-  private final Map<String, Strategy> _partialUpsertStrategies;
+  private Map<String, Strategy> _partialUpsertStrategies;
 
   @JsonPropertyDescription("default upsert strategy for partial mode")
-  private final Strategy _defaultPartialUpsertStrategy;
+  private Strategy _defaultPartialUpsertStrategy;
 
-  @JsonPropertyDescription("Column for upsert comparison, default to time column")
-  private final String _comparisonColumn;
+  @JsonPropertyDescription("Columns for upsert comparison, default to time column")
+  private List<String> _comparisonColumns;
 
-  @JsonCreator
-  public UpsertConfig(@JsonProperty(value = "mode", required = true) Mode mode,
-      @JsonProperty("partialUpsertStrategies") @Nullable Map<String, Strategy> partialUpsertStrategies,
-      @JsonProperty("defaultPartialUpsertStrategy") @Nullable Strategy defaultPartialUpsertStrategy,
-      @JsonProperty("comparisonColumn") @Nullable String comparisonColumn,
-      @JsonProperty("hashFunction") @Nullable HashFunction hashFunction) {
-    Preconditions.checkArgument(mode != null, "Upsert mode must be configured");
+  @JsonPropertyDescription("Whether to use snapshot for fast upsert metadata recovery")
+  private boolean _enableSnapshot;
+
+  @JsonPropertyDescription("Custom class for upsert metadata manager")
+  private String _metadataManagerClass;
+
+  @JsonPropertyDescription("Custom configs for upsert metadata manager")
+  private Map<String, String> _metadataManagerConfigs;
+
+  public UpsertConfig(Mode mode) {
     _mode = mode;
+  }
 
-    if (mode == Mode.PARTIAL) {
-      _partialUpsertStrategies = partialUpsertStrategies != null ? partialUpsertStrategies : new HashMap<>();
-      _defaultPartialUpsertStrategy =
-          defaultPartialUpsertStrategy != null ? defaultPartialUpsertStrategy : Strategy.OVERWRITE;
-    } else {
-      _partialUpsertStrategies = null;
-      _defaultPartialUpsertStrategy = null;
-    }
-
-    _comparisonColumn = comparisonColumn;
-    _hashFunction = hashFunction == null ? HashFunction.NONE : hashFunction;
+  // Do not use this constructor. This is needed for JSON deserialization.
+  public UpsertConfig() {
   }
 
   public Mode getMode() {
     return _mode;
+  }
+
+  public void setMode(Mode mode) {
+    _mode = mode;
   }
 
   public HashFunction getHashFunction() {
@@ -94,7 +92,77 @@ public class UpsertConfig extends BaseJsonConfig {
     return _defaultPartialUpsertStrategy;
   }
 
-  public String getComparisonColumn() {
-    return _comparisonColumn;
+  public List<String> getComparisonColumns() {
+    return _comparisonColumns;
+  }
+
+  public boolean isEnableSnapshot() {
+    return _enableSnapshot;
+  }
+
+  @Nullable
+  public String getMetadataManagerClass() {
+    return _metadataManagerClass;
+  }
+
+  @Nullable
+  public Map<String, String> getMetadataManagerConfigs() {
+    return _metadataManagerConfigs;
+  }
+
+  public void setHashFunction(HashFunction hashFunction) {
+    _hashFunction = hashFunction;
+  }
+
+  /**
+   * PartialUpsertStrategies maintains the mapping of merge strategies per column.
+   * Each key in the map is a columnName, value is a partial upsert merging strategy.
+   * Supported strategies are {OVERWRITE|INCREMENT|APPEND|UNION|IGNORE}.
+   */
+  public void setPartialUpsertStrategies(Map<String, Strategy> partialUpsertStrategies) {
+    _partialUpsertStrategies = partialUpsertStrategies;
+  }
+
+  /**
+   * If strategy is not specified for a column, the merger on that column will be "defaultPartialUpsertStrategy".
+   * The default value of defaultPartialUpsertStrategy is OVERWRITE.
+   */
+  public void setDefaultPartialUpsertStrategy(Strategy defaultPartialUpsertStrategy) {
+    _defaultPartialUpsertStrategy = defaultPartialUpsertStrategy;
+  }
+
+  /**
+   * By default, Pinot uses the value in the time column to determine the latest record. For two records with the
+   * same primary key, the record with the larger value of the time column is picked as the
+   * latest update.
+   * However, there are cases when users need to use another column to determine the order.
+   * In such case, you can use option comparisonColumn to override the column used for comparison. When using
+   * multiple comparison columns, typically in the case of partial upserts, it is expected that input documents will
+   * each only have a singular non-null comparisonColumn. Multiple non-null values in an input document _will_ result
+   * in undefined behaviour. Typically, one comparisonColumn is allocated per distinct producer application of data
+   * in the case where there are multiple producers sinking to the same table.
+   */
+  public void setComparisonColumns(List<String> comparisonColumns) {
+    if (CollectionUtils.isNotEmpty(comparisonColumns)) {
+      _comparisonColumns = comparisonColumns;
+    }
+  }
+
+  public void setComparisonColumn(String comparisonColumn) {
+    if (comparisonColumn != null) {
+      _comparisonColumns = Collections.singletonList(comparisonColumn);
+    }
+  }
+
+  public void setEnableSnapshot(boolean enableSnapshot) {
+    _enableSnapshot = enableSnapshot;
+  }
+
+  public void setMetadataManagerClass(String metadataManagerClass) {
+    _metadataManagerClass = metadataManagerClass;
+  }
+
+  public void setMetadataManagerConfigs(Map<String, String> metadataManagerConfigs) {
+    _metadataManagerConfigs = metadataManagerConfigs;
   }
 }

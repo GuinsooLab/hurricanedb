@@ -25,6 +25,7 @@ import org.apache.pinot.common.Utils;
  * Controller gauges.
  */
 public enum ControllerGauge implements AbstractMetrics.Gauge {
+  VERSION("version", true),
 
   REPLICATION_FROM_CONFIG("replicas", false),
   // Number of complete replicas of table in external view containing all segments online in ideal state
@@ -51,6 +52,9 @@ public enum ControllerGauge implements AbstractMetrics.Gauge {
   OFFLINE_TABLE_COUNT("TableCount", true),
   DISABLED_TABLE_COUNT("TableCount", true),
   PERIODIC_TASK_NUM_TABLES_PROCESSED("PeriodicTaskNumTablesProcessed", true),
+  TIME_MS_SINCE_LAST_MINION_TASK_METADATA_UPDATE("TimeMsSinceLastMinionTaskMetadataUpdate", false),
+  TIME_MS_SINCE_LAST_SUCCESSFUL_MINION_TASK_GENERATION("TimeMsSinceLastSuccessfulMinionTaskGeneration", false),
+  LAST_MINION_TASK_GENERATION_ENCOUNTERS_ERROR("LastMinionTaskGenerationEncountersError", false),
   NUM_MINION_TASKS_IN_PROGRESS("NumMinionTasksInProgress", true),
   NUM_MINION_SUBTASKS_WAITING("NumMinionSubtasksWaiting", true),
   NUM_MINION_SUBTASKS_RUNNING("NumMinionSubtasksRunning", true),
@@ -97,8 +101,14 @@ public enum ControllerGauge implements AbstractMetrics.Gauge {
   // Number of Tasks Status
   TASK_STATUS("taskStatus", false),
 
-  // Number of dropped minion instances
+  // Number of dropped stale minion instances
   DROPPED_MINION_INSTANCES("droppedMinionInstances", true),
+
+  // Number of dropped stale broker instances
+  DROPPED_BROKER_INSTANCES("droppedBrokerInstances", true),
+
+  // Number of dropped stale server instances
+  DROPPED_SERVER_INSTANCES("droppedServerInstances", true),
 
   // Number of online minion instances
   ONLINE_MINION_INSTANCES("onlineMinionInstances", true),
@@ -110,7 +120,19 @@ public enum ControllerGauge implements AbstractMetrics.Gauge {
   MISSING_CONSUMING_SEGMENT_NEW_PARTITION_COUNT("missingConsumingSegmentNewPartitionCount", false),
 
   // Maximum duration of a missing consuming segment in ideal state (in minutes)
-  MISSING_CONSUMING_SEGMENT_MAX_DURATION_MINUTES("missingSegmentsMaxDurationInMinutes", false);
+  MISSING_CONSUMING_SEGMENT_MAX_DURATION_MINUTES("missingSegmentsMaxDurationInMinutes", false),
+
+  // Number of in progress segment downloads
+  SEGMENT_DOWNLOADS_IN_PROGRESS("segmentDownloadsInProgress", true),
+
+  // Number of in progress segment uploads
+  SEGMENT_UPLOADS_IN_PROGRESS("segmentUploadsInProgress", true),
+
+  // Records lag at a partition level
+  MAX_RECORDS_LAG("maxRecordsLag", false),
+
+  // Consumption availability lag in ms at a partition level
+  MAX_RECORD_AVAILABILITY_LAG_MS("maxRecordAvailabilityLagMs", false);
 
   private final String _gaugeName;
   private final String _unit;

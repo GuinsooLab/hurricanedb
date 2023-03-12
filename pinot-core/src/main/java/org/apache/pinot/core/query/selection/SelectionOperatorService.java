@@ -18,18 +18,16 @@
  */
 package org.apache.pinot.core.query.selection;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.PriorityQueue;
-import org.apache.pinot.common.request.context.OrderByExpressionContext;
+import org.apache.pinot.common.datatable.DataTable;
 import org.apache.pinot.common.response.broker.ResultTable;
 import org.apache.pinot.common.utils.DataSchema;
-import org.apache.pinot.common.utils.DataSchema.ColumnDataType;
-import org.apache.pinot.common.utils.DataTable;
 import org.apache.pinot.core.query.request.context.QueryContext;
+import org.apache.pinot.spi.trace.Tracing;
+import org.roaringbitmap.RoaringBitmap;
 
 
 /**
@@ -57,8 +55,8 @@ import org.apache.pinot.core.query.request.context.QueryContext;
  *   </li>
  * </ul>
  */
-@SuppressWarnings("rawtypes")
 public class SelectionOperatorService {
+  private final QueryContext _queryContext;
   private final List<String> _selectionColumns;
   private final DataSchema _dataSchema;
   private final int _offset;
@@ -66,72 +64,24 @@ public class SelectionOperatorService {
   private final PriorityQueue<Object[]> _rows;
 
   /**
-   * Constructor for <code>SelectionOperatorService</code> with {@link DataSchema}. (Inter segment)
+   * Constructor for <code>SelectionOperatorService</code> with {@link DataSchema}. (Broker side)
    *
    * @param queryContext Selection order-by query
    * @param dataSchema data schema.
    */
   public SelectionOperatorService(QueryContext queryContext, DataSchema dataSchema) {
+    _queryContext = queryContext;
     _selectionColumns = SelectionOperatorUtils.getSelectionColumns(queryContext, dataSchema);
     _dataSchema = dataSchema;
     // Select rows from offset to offset + limit.
     _offset = queryContext.getOffset();
     _numRowsToKeep = _offset + queryContext.getLimit();
     assert queryContext.getOrderByExpressions() != null;
+    // TODO: Do not use type compatible comparator for performance since we don't support different data schema on
+    //       server side combine
     _rows = new PriorityQueue<>(Math.min(_numRowsToKeep, SelectionOperatorUtils.MAX_ROW_HOLDER_INITIAL_CAPACITY),
-        getTypeCompatibleComparator(queryContext.getOrderByExpressions()));
-  }
-
-  /**
-   * Helper method to get the type-compatible {@link Comparator} for selection rows. (Inter segment)
-   * <p>Type-compatible comparator allows compatible types to compare with each other.
-   *
-   * @return flexible {@link Comparator} for selection rows.
-   */
-  private Comparator<Object[]> getTypeCompatibleComparator(List<OrderByExpressionContext> orderByExpressions) {
-    ColumnDataType[] columnDataTypes = _dataSchema.getColumnDataTypes();
-
-    // Compare all single-value columns
-    int numOrderByExpressions = orderByExpressions.size();
-    List<Integer> valueIndexList = new ArrayList<>(numOrderByExpressions);
-    for (int i = 0; i < numOrderByExpressions; i++) {
-      if (!columnDataTypes[i].isArray()) {
-        valueIndexList.add(i);
-      }
-    }
-
-    int numValuesToCompare = valueIndexList.size();
-    int[] valueIndices = new int[numValuesToCompare];
-    boolean[] useDoubleComparison = new boolean[numValuesToCompare];
-    // Use multiplier -1 or 1 to control ascending/descending order
-    int[] multipliers = new int[numValuesToCompare];
-    for (int i = 0; i < numValuesToCompare; i++) {
-      int valueIndex = valueIndexList.get(i);
-      valueIndices[i] = valueIndex;
-      if (columnDataTypes[valueIndex].isNumber()) {
-        useDoubleComparison[i] = true;
-      }
-      multipliers[i] = orderByExpressions.get(valueIndex).isAsc() ? -1 : 1;
-    }
-
-    return (o1, o2) -> {
-      for (int i = 0; i < numValuesToCompare; i++) {
-        int index = valueIndices[i];
-        Object v1 = o1[index];
-        Object v2 = o2[index];
-        int result;
-        if (useDoubleComparison[i]) {
-          result = Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue());
-        } else {
-          //noinspection unchecked
-          result = ((Comparable) v1).compareTo(v2);
-        }
-        if (result != 0) {
-          return result * multipliers[i];
-        }
-      }
-      return 0;
-    };
+        SelectionOperatorUtils.getTypeCompatibleComparator(queryContext.getOrderByExpressions(), _dataSchema,
+            _queryContext.isNullHandlingEnabled()));
   }
 
   /**
@@ -146,13 +96,33 @@ public class SelectionOperatorService {
   /**
    * Reduces a collection of {@link DataTable}s to selection rows for selection queries with <code>ORDER BY</code>.
    * (Broker side)
+   * TODO: Do merge sort after releasing 0.13.0 when server side results are sorted
+   *       Can also consider adding a data table metadata to indicate whether the server side results are sorted
    */
-  public void reduceWithOrdering(Collection<DataTable> dataTables) {
+  public void reduceWithOrdering(Collection<DataTable> dataTables, boolean nullHandlingEnabled) {
     for (DataTable dataTable : dataTables) {
       int numRows = dataTable.getNumberOfRows();
-      for (int rowId = 0; rowId < numRows; rowId++) {
-        Object[] row = SelectionOperatorUtils.extractRowFromDataTable(dataTable, rowId);
-        SelectionOperatorUtils.addToPriorityQueue(row, _rows, _numRowsToKeep);
+      if (nullHandlingEnabled) {
+        RoaringBitmap[] nullBitmaps = new RoaringBitmap[dataTable.getDataSchema().size()];
+        for (int colId = 0; colId < nullBitmaps.length; colId++) {
+          nullBitmaps[colId] = dataTable.getNullRowIds(colId);
+        }
+        for (int rowId = 0; rowId < numRows; rowId++) {
+          Object[] row = SelectionOperatorUtils.extractRowFromDataTable(dataTable, rowId);
+          for (int colId = 0; colId < nullBitmaps.length; colId++) {
+            if (nullBitmaps[colId] != null && nullBitmaps[colId].contains(rowId)) {
+              row[colId] = null;
+            }
+          }
+          SelectionOperatorUtils.addToPriorityQueue(row, _rows, _numRowsToKeep);
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rowId);
+        }
+      } else {
+        for (int rowId = 0; rowId < numRows; rowId++) {
+          Object[] row = SelectionOperatorUtils.extractRowFromDataTable(dataTable, rowId);
+          SelectionOperatorUtils.addToPriorityQueue(row, _rows, _numRowsToKeep);
+          Tracing.ThreadAccountantOps.sampleAndCheckInterruptionPeriodically(rowId);
+        }
       }
     }
   }
@@ -166,18 +136,7 @@ public class SelectionOperatorService {
   public ResultTable renderResultTableWithOrdering() {
     int[] columnIndices = SelectionOperatorUtils.getColumnIndices(_selectionColumns, _dataSchema);
     int numColumns = columnIndices.length;
-
-    // Construct the result data schema
-    String[] columnNames = _dataSchema.getColumnNames();
-    ColumnDataType[] columnDataTypes = _dataSchema.getColumnDataTypes();
-    String[] resultColumnNames = new String[numColumns];
-    ColumnDataType[] resultColumnDataTypes = new ColumnDataType[numColumns];
-    for (int i = 0; i < numColumns; i++) {
-      int columnIndex = columnIndices[i];
-      resultColumnNames[i] = columnNames[columnIndex];
-      resultColumnDataTypes[i] = columnDataTypes[columnIndex];
-    }
-    DataSchema resultDataSchema = new DataSchema(resultColumnNames, resultColumnDataTypes);
+    DataSchema resultDataSchema = SelectionOperatorUtils.getSchemaForProjection(_dataSchema, columnIndices);
 
     // Extract the result rows
     LinkedList<Object[]> rowsInSelectionResults = new LinkedList<>();
@@ -186,8 +145,12 @@ public class SelectionOperatorService {
       assert row != null;
       Object[] extractedRow = new Object[numColumns];
       for (int i = 0; i < numColumns; i++) {
-        extractedRow[i] = resultColumnDataTypes[i].convertAndFormat(row[columnIndices[i]]);
+        Object value = row[columnIndices[i]];
+        if (value != null) {
+          extractedRow[i] = resultDataSchema.getColumnDataType(i).convertAndFormat(value);
+        }
       }
+
       rowsInSelectionResults.addFirst(extractedRow);
     }
 

@@ -18,7 +18,9 @@
  */
 package org.apache.pinot.core.operator.dociditerators;
 
+import java.util.OptionalInt;
 import org.apache.pinot.core.common.BlockDocIdIterator;
+import org.roaringbitmap.BatchIterator;
 import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
 
@@ -34,14 +36,30 @@ import org.roaringbitmap.buffer.MutableRoaringBitmap;
  */
 public interface ScanBasedDocIdIterator extends BlockDocIdIterator {
 
+  MutableRoaringBitmap applyAnd(BatchIterator batchIterator, OptionalInt firstDoc, OptionalInt lastDoc);
+
   /**
    * Applies AND operation to the given bitmap of document ids, returns a bitmap of the matching document ids.
    */
-  MutableRoaringBitmap applyAnd(ImmutableRoaringBitmap docIds);
+  default MutableRoaringBitmap applyAnd(ImmutableRoaringBitmap docIds) {
+    if (docIds.isEmpty()) {
+      return new MutableRoaringBitmap();
+    }
+    return applyAnd(docIds.getBatchIterator(), OptionalInt.of(docIds.first()), OptionalInt.of(docIds.last()));
+  }
 
   /**
    * Returns the number of entries (SV value contains one entry, MV value contains multiple entries) scanned during the
    * iteration. This method should be called after the iteration is done.
    */
   long getNumEntriesScanned();
+
+  /**
+   * Returns the estimated (effective) cardinality of the underlying data source
+   */
+
+  default float getEstimatedCardinality(boolean isAndDocIdSet) {
+    //default N/A behavior so that it always get picked in the end
+    return isAndDocIdSet ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
+  }
 }

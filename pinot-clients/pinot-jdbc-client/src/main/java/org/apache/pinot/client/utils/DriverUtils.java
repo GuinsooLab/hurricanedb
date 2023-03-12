@@ -217,4 +217,38 @@ public class DriverUtils {
     Matcher matcher = pattern.matcher(query);
     return matcher.find();
   }
+
+  public static String enableQueryOptions(String sql, Map<String, Object> options) {
+    StringBuilder optionsBuilder = new StringBuilder();
+    for (Map.Entry<String, Object> optionEntry: options.entrySet()) {
+      if (!sql.contains(optionEntry.getKey())) {
+        optionsBuilder.append(DriverUtils.createSetQueryOptionString(optionEntry.getKey(), optionEntry.getValue()));
+      }
+    }
+    optionsBuilder.append(sql);
+    return optionsBuilder.toString();
+  }
+
+  public static String createSetQueryOptionString(String optionKey, Object optionValue) {
+    StringBuilder optionBuilder = new StringBuilder();
+    optionBuilder.append("SET ").append(optionKey);
+
+    if (optionValue != null) {
+      optionBuilder.append('=');
+
+      if (optionValue instanceof Boolean) {
+        optionBuilder.append(((Boolean) optionValue).booleanValue());
+      } else if (optionValue instanceof Integer || optionValue instanceof Long) {
+        optionBuilder.append(((Number) optionValue).longValue());
+      } else if (optionValue instanceof Float || optionValue instanceof Double) {
+        optionBuilder.append(((Number) optionValue).doubleValue());
+      } else {
+        throw new IllegalArgumentException(
+          "Option Type " + optionValue.getClass().getSimpleName() + " is not supported.");
+      }
+    }
+
+    optionBuilder.append(";\n");
+    return optionBuilder.toString();
+  }
 }

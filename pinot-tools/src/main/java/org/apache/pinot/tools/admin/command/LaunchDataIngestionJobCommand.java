@@ -109,7 +109,7 @@ public class LaunchDataIngestionJobCommand extends AbstractBaseAdminCommand impl
     SegmentGenerationJobSpec spec;
     try {
       spec = IngestionJobLauncher.getSegmentGenerationJobSpec(jobSpecFilePath, propertyFilePath,
-          GroovyTemplateUtils.getTemplateContext(_values));
+          GroovyTemplateUtils.getTemplateContext(_values), System.getenv());
     } catch (Exception e) {
       LOGGER.error("Got exception to generate IngestionJobSpec for data ingestion job - ", e);
       throw e;
@@ -123,13 +123,13 @@ public class LaunchDataIngestionJobCommand extends AbstractBaseAdminCommand impl
     }
 
     if (StringUtils.isBlank(spec.getAuthToken())) {
-      spec.setAuthToken(makeAuthProvider(_authProvider, _authToken, _user, _password, _authTokenUrl).getTaskToken());
+      spec.setAuthToken(makeAuthProvider(_authProvider, _authTokenUrl, _authToken, _user, _password).getTaskToken());
     }
 
     try {
       IngestionJobLauncher.runIngestionJob(spec);
     } catch (Exception e) {
-      LOGGER.error("Got exception to kick off standalone data ingestion job - ", e);
+      LOGGER.error("Got exception to kick off {} data ingestion job - ", spec.getExecutionFrameworkSpec().getName(), e);
       throw e;
     }
     return true;
@@ -159,6 +159,10 @@ public class LaunchDataIngestionJobCommand extends AbstractBaseAdminCommand impl
 
   public static void main(String[] args) {
     PluginManager.get().init();
-    new CommandLine(new LaunchDataIngestionJobCommand()).execute(args);
+    int exitCode = new CommandLine(new LaunchDataIngestionJobCommand()).execute(args);
+    if ((exitCode != 0)
+        || Boolean.parseBoolean(System.getProperties().getProperty("pinot.admin.system.exit"))) {
+      System.exit(exitCode);
+    }
   }
 }

@@ -29,7 +29,7 @@ type Props = {
   clusterName: string
 };
 
-const InstaceTable = ({ name, instances, clusterName }: Props) => {
+const InstanceTable = ({ name, instances, clusterName }: Props) => {
 
   const [fetching, setFetching] = useState(true);
   const [tableData, setTableData] = useState<TableData>({
@@ -65,9 +65,8 @@ const InstaceTable = ({ name, instances, clusterName }: Props) => {
       inAccordionFormat={true}
       addLinks
       baseURL="/instance/"
-      isPagination
     />
   );
 };
 
-export default InstaceTable;
+export default InstanceTable;

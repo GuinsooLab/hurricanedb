@@ -18,10 +18,11 @@
  */
 package org.apache.pinot.common.minion;
 
-import org.I0Itec.zkclient.exception.ZkException;
+import java.util.Map;
 import org.apache.helix.AccessOption;
-import org.apache.helix.ZNRecord;
 import org.apache.helix.store.HelixPropertyStore;
+import org.apache.helix.zookeeper.datamodel.ZNRecord;
+import org.apache.helix.zookeeper.zkclient.exception.ZkException;
 import org.apache.pinot.common.metadata.ZKMetadataProvider;
 import org.apache.pinot.common.utils.helix.FakePropertyStore;
 import org.apache.zookeeper.data.Stat;
@@ -77,6 +78,67 @@ public class MinionTaskMetadataUtilsTest {
   }
 
   @Test
+  public void testGetAllTaskMetadataLastUpdateTimeMs() {
+    // no task metadata exists
+    HelixPropertyStore<ZNRecord> propertyStore = new FakePropertyStore();
+    assertTrue(MinionTaskMetadataUtils.getAllTaskMetadataLastUpdateTimeMs(propertyStore).isEmpty());
+
+    // only the old metadata path exists
+    propertyStore = new FakePropertyStore();
+    long tsBeforeSet = System.currentTimeMillis();
+    propertyStore.set(OLD_MINION_METADATA_PATH, OLD_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    long tsAfterSet = System.currentTimeMillis();
+    Map<String, Map<String, Long>> allTaskMetadataLastUpdateTimeMs =
+        MinionTaskMetadataUtils.getAllTaskMetadataLastUpdateTimeMs(propertyStore);
+    assertEquals(allTaskMetadataLastUpdateTimeMs.size(), 1);
+    Map<String, Long> taskTypeLastUpdateMsMap = allTaskMetadataLastUpdateTimeMs.get(TABLE_NAME_WITH_TYPE);
+    assertEquals(taskTypeLastUpdateMsMap.size(), 1);
+    long lastUpdateTimeMs = taskTypeLastUpdateMsMap.get(TASK_TYPE);
+    assertTrue(lastUpdateTimeMs >= tsBeforeSet && lastUpdateTimeMs <= tsAfterSet);
+
+    // only the new metadata path exists
+    propertyStore = new FakePropertyStore();
+    tsBeforeSet = System.currentTimeMillis();
+    propertyStore.set(NEW_MINION_METADATA_PATH, NEW_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    tsAfterSet = System.currentTimeMillis();
+    allTaskMetadataLastUpdateTimeMs =
+        MinionTaskMetadataUtils.getAllTaskMetadataLastUpdateTimeMs(propertyStore);
+    assertEquals(allTaskMetadataLastUpdateTimeMs.size(), 1);
+    taskTypeLastUpdateMsMap = allTaskMetadataLastUpdateTimeMs.get(TABLE_NAME_WITH_TYPE);
+    assertEquals(taskTypeLastUpdateMsMap.size(), 1);
+    lastUpdateTimeMs = taskTypeLastUpdateMsMap.get(TASK_TYPE);
+    assertTrue(lastUpdateTimeMs >= tsBeforeSet && lastUpdateTimeMs <= tsAfterSet);
+
+    // if two metadata paths exist at the same time, the newly updated one will be used.
+    // the new metadata path is updated later
+    propertyStore = new FakePropertyStore();
+    propertyStore.set(OLD_MINION_METADATA_PATH, OLD_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    long tsAfterOldPathSet = System.currentTimeMillis();
+    propertyStore.set(NEW_MINION_METADATA_PATH, NEW_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    long tsAfterNewPathSet = System.currentTimeMillis();
+    allTaskMetadataLastUpdateTimeMs =
+        MinionTaskMetadataUtils.getAllTaskMetadataLastUpdateTimeMs(propertyStore);
+    assertEquals(allTaskMetadataLastUpdateTimeMs.size(), 1);
+    taskTypeLastUpdateMsMap = allTaskMetadataLastUpdateTimeMs.get(TABLE_NAME_WITH_TYPE);
+    assertEquals(taskTypeLastUpdateMsMap.size(), 1);
+    lastUpdateTimeMs = taskTypeLastUpdateMsMap.get(TASK_TYPE);
+    assertTrue(lastUpdateTimeMs >= tsAfterOldPathSet && lastUpdateTimeMs <= tsAfterNewPathSet);
+    // the old metadata path is updated later
+    propertyStore = new FakePropertyStore();
+    propertyStore.set(NEW_MINION_METADATA_PATH, NEW_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    tsAfterNewPathSet = System.currentTimeMillis();
+    propertyStore.set(OLD_MINION_METADATA_PATH, OLD_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    tsAfterOldPathSet = System.currentTimeMillis();
+    allTaskMetadataLastUpdateTimeMs =
+        MinionTaskMetadataUtils.getAllTaskMetadataLastUpdateTimeMs(propertyStore);
+    assertEquals(allTaskMetadataLastUpdateTimeMs.size(), 1);
+    taskTypeLastUpdateMsMap = allTaskMetadataLastUpdateTimeMs.get(TABLE_NAME_WITH_TYPE);
+    assertEquals(taskTypeLastUpdateMsMap.size(), 1);
+    lastUpdateTimeMs = taskTypeLastUpdateMsMap.get(TASK_TYPE);
+    assertTrue(lastUpdateTimeMs >= tsAfterNewPathSet && lastUpdateTimeMs <= tsAfterOldPathSet);
+  }
+
+  @Test
   public void testDeleteTaskMetadata() {
     // no error
     HelixPropertyStore<ZNRecord> propertyStore = new FakePropertyStore();
@@ -91,6 +153,32 @@ public class MinionTaskMetadataUtilsTest {
     MinionTaskMetadataUtils.deleteTaskMetadata(propertyStore, TASK_TYPE, TABLE_NAME_WITH_TYPE);
     assertFalse(propertyStore.exists(OLD_MINION_METADATA_PATH, ACCESS_OPTION));
     assertFalse(propertyStore.exists(NEW_MINION_METADATA_PATH, ACCESS_OPTION));
+
+    // 1. ZNode MINION_TASK_METADATA/TestTable_OFFLINE and its descendants will be removed
+    // 2. ZNode MINION_TASK_METADATA/<any task type>/TestTable_OFFLINE will also be removed
+    String anotherTable = "anotherTable_OFFLINE";
+    String anotherOldMinionMetadataPath =
+        ZKMetadataProvider.constructPropertyStorePathForMinionTaskMetadataDeprecated(TASK_TYPE, anotherTable);
+    DummyTaskMetadata anotherOldTaskMetadata = new DummyTaskMetadata(anotherTable, 20);
+    String anotherNewMinionMetadataPath =
+        ZKMetadataProvider.constructPropertyStorePathForMinionTaskMetadata(anotherTable, TASK_TYPE);
+    DummyTaskMetadata anotherNewTaskMetadata = new DummyTaskMetadata(anotherTable, 200);
+    propertyStore = new FakePropertyStore();
+    propertyStore.set(OLD_MINION_METADATA_PATH, OLD_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    propertyStore.set(NEW_MINION_METADATA_PATH, NEW_TASK_METADATA.toZNRecord(), EXPECTED_VERSION, ACCESS_OPTION);
+    propertyStore.set(anotherOldMinionMetadataPath, anotherOldTaskMetadata.toZNRecord(),
+        EXPECTED_VERSION, ACCESS_OPTION);
+    propertyStore.set(anotherNewMinionMetadataPath, anotherNewTaskMetadata.toZNRecord(),
+        EXPECTED_VERSION, ACCESS_OPTION);
+    assertTrue(propertyStore.exists(OLD_MINION_METADATA_PATH, ACCESS_OPTION));
+    assertTrue(propertyStore.exists(NEW_MINION_METADATA_PATH, ACCESS_OPTION));
+    assertTrue(propertyStore.exists(anotherOldMinionMetadataPath, ACCESS_OPTION));
+    assertTrue(propertyStore.exists(anotherNewMinionMetadataPath, ACCESS_OPTION));
+    MinionTaskMetadataUtils.deleteTaskMetadata(propertyStore, TABLE_NAME_WITH_TYPE);
+    assertFalse(propertyStore.exists(OLD_MINION_METADATA_PATH, ACCESS_OPTION));
+    assertFalse(propertyStore.exists(NEW_MINION_METADATA_PATH, ACCESS_OPTION));
+    assertTrue(propertyStore.exists(anotherOldMinionMetadataPath, ACCESS_OPTION));
+    assertTrue(propertyStore.exists(anotherNewMinionMetadataPath, ACCESS_OPTION));
   }
 
   @Test

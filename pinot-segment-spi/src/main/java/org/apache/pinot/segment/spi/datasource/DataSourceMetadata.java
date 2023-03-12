@@ -50,6 +50,8 @@ public interface DataSourceMetadata {
 
   /**
    * Returns {@code true} if the column is sorted, {@code false} otherwise.
+   *
+   * The result of this method cannot be trusted if null handling is enabled.
    */
   boolean isSorted();
 
@@ -93,4 +95,17 @@ public interface DataSourceMetadata {
    */
   @Nullable
   Set<Integer> getPartitions();
+
+  /**
+   * Returns the cardinality of the column, {@code -1} if not applicable
+   */
+  int getCardinality();
+
+  /**
+   * Returns the max row length in bytes for a var byte MV column. {@code -1} if not applicable.
+   * @return
+   */
+  default int getMaxRowLengthInBytes() {
+    return -1;
+  }
 }

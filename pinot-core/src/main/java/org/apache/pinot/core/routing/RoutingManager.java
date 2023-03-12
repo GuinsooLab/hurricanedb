@@ -50,7 +50,7 @@ public interface RoutingManager {
    * @param brokerRequest the broker request constructed from a query.
    * @return the route table.
    */
-  RoutingTable getRoutingTable(BrokerRequest brokerRequest);
+  RoutingTable getRoutingTable(BrokerRequest brokerRequest, long requestId);
 
   /**
    * Validate routing exist for a table
@@ -59,4 +59,12 @@ public interface RoutingManager {
    * @return true if the route table exists.
    */
   boolean routingExists(String tableNameWithType);
+
+  /**
+   * Acquire the time boundary info. Useful for hybrid logical table queries that needs to split between
+   * realtime and offline.
+   * @param offlineTableName offline table name
+   * @return time boundary info.
+   */
+  TimeBoundaryInfo getTimeBoundaryInfo(String offlineTableName);
 }

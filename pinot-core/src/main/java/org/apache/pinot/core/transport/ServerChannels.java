@@ -24,17 +24,15 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.epoll.Epoll;
 import io.netty.channel.epoll.EpollEventLoopGroup;
 import io.netty.channel.epoll.EpollSocketChannel;
+import io.netty.channel.kqueue.KQueue;
 import io.netty.channel.kqueue.KQueueEventLoopGroup;
 import io.netty.channel.kqueue.KQueueSocketChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
-import io.netty.handler.codec.LengthFieldPrepender;
-import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.SslProvider;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -48,11 +46,12 @@ import org.apache.pinot.common.metrics.BrokerMeter;
 import org.apache.pinot.common.metrics.BrokerMetrics;
 import org.apache.pinot.common.metrics.BrokerTimer;
 import org.apache.pinot.common.request.InstanceRequest;
-import org.apache.pinot.common.utils.TlsUtils;
 import org.apache.pinot.core.util.OsCheck;
 import org.apache.thrift.TSerializer;
 import org.apache.thrift.protocol.TCompactProtocol;
 import org.apache.thrift.transport.TTransportException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -62,6 +61,7 @@ import org.apache.thrift.transport.TTransportException;
  */
 @ThreadSafe
 public class ServerChannels {
+  private static final Logger LOGGER = LoggerFactory.getLogger(ServerChannels.class);
   public static final String CHANNEL_LOCK_TIMEOUT_MSG = "Timeout while acquiring channel lock";
   private static final long TRY_CONNECT_CHANNEL_LOCK_TIMEOUT_MS = 5_000L;
 
@@ -83,17 +83,32 @@ public class ServerChannels {
    */
   public ServerChannels(QueryRouter queryRouter, BrokerMetrics brokerMetrics, @Nullable NettyConfig nettyConfig,
       @Nullable TlsConfig tlsConfig) {
-    if (nettyConfig != null && nettyConfig.isNativeTransportsEnabled()
-        && OsCheck.getOperatingSystemType() == OsCheck.OSType.Linux) {
+    boolean enableNativeTransports = nettyConfig != null && nettyConfig.isNativeTransportsEnabled();
+    OsCheck.OSType operatingSystemType = OsCheck.getOperatingSystemType();
+    if (enableNativeTransports
+        && operatingSystemType == OsCheck.OSType.Linux
+        && Epoll.isAvailable()) {
       _eventLoopGroup = new EpollEventLoopGroup();
       _channelClass = EpollSocketChannel.class;
-    } else if (nettyConfig != null && nettyConfig.isNativeTransportsEnabled()
-        && OsCheck.getOperatingSystemType() == OsCheck.OSType.MacOS) {
+      LOGGER.info("Using Epoll event loop");
+    } else if (enableNativeTransports
+        && operatingSystemType == OsCheck.OSType.MacOS
+        && KQueue.isAvailable()) {
       _eventLoopGroup = new KQueueEventLoopGroup();
       _channelClass = KQueueSocketChannel.class;
+      LOGGER.info("Using KQueue event loop");
     } else {
       _eventLoopGroup = new NioEventLoopGroup();
       _channelClass = NioSocketChannel.class;
+      StringBuilder log = new StringBuilder("Using NIO event loop");
+      if (operatingSystemType == OsCheck.OSType.Linux
+          && enableNativeTransports) {
+        log.append(", as Epoll is not available: ").append(Epoll.unavailabilityCause());
+      } else if (operatingSystemType == OsCheck.OSType.MacOS
+          && enableNativeTransports) {
+        log.append(", as KQueue is not available: ").append(KQueue.unavailabilityCause());
+      }
+      LOGGER.info(log.toString());
     }
 
     _queryRouter = queryRouter;
@@ -142,36 +157,19 @@ public class ServerChannels {
             @Override
             protected void initChannel(SocketChannel ch) {
               if (_tlsConfig != null) {
-                attachSSLHandler(ch);
+                // Add SSL handler first to encrypt and decrypt everything.
+                ch.pipeline().addLast(
+                    ChannelHandlerFactory.SSL, ChannelHandlerFactory.getClientTlsHandler(_tlsConfig, ch));
               }
 
-              ch.pipeline()
-                  .addLast(new LengthFieldBasedFrameDecoder(Integer.MAX_VALUE, 0, Integer.BYTES, 0, Integer.BYTES),
-                      new LengthFieldPrepender(Integer.BYTES),
-                      // NOTE: data table de-serialization happens inside this handler
-                      // Revisit if this becomes a bottleneck
-                      new DataTableHandler(_queryRouter, _serverRoutingInstance, _brokerMetrics));
+              ch.pipeline().addLast(ChannelHandlerFactory.getLengthFieldBasedFrameDecoder());
+              ch.pipeline().addLast(ChannelHandlerFactory.getLengthFieldPrepender());
+              // NOTE: data table de-serialization happens inside this handler
+              // Revisit if this becomes a bottleneck
+              ch.pipeline().addLast(
+                  ChannelHandlerFactory.getDataTableHandler(_queryRouter, _serverRoutingInstance, _brokerMetrics));
             }
           });
-    }
-
-    void attachSSLHandler(SocketChannel ch) {
-      try {
-        SslContextBuilder sslContextBuilder =
-            SslContextBuilder.forClient().sslProvider(SslProvider.valueOf(_tlsConfig.getSslProvider()));
-
-        if (_tlsConfig.getKeyStorePath() != null) {
-          sslContextBuilder.keyManager(TlsUtils.createKeyManagerFactory(_tlsConfig));
-        }
-
-        if (_tlsConfig.getTrustStorePath() != null) {
-          sslContextBuilder.trustManager(TlsUtils.createTrustManagerFactory(_tlsConfig));
-        }
-
-        ch.pipeline().addLast("ssl", sslContextBuilder.build().newHandler(ch.alloc()));
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      }
     }
 
     void sendRequest(String rawTableName, AsyncQueryResponse asyncQueryResponse,
@@ -203,7 +201,7 @@ public class ServerChannels {
         ServerRoutingInstance serverRoutingInstance, byte[] requestBytes) {
       long startTimeMs = System.currentTimeMillis();
       _channel.writeAndFlush(Unpooled.wrappedBuffer(requestBytes)).addListener(f -> {
-        long requestSentLatencyMs = System.currentTimeMillis() - startTimeMs;
+        int requestSentLatencyMs = (int) (System.currentTimeMillis() - startTimeMs);
         _brokerMetrics.addTimedTableValue(rawTableName, BrokerTimer.NETTY_CONNECTION_SEND_REQUEST_LATENCY,
             requestSentLatencyMs, TimeUnit.MILLISECONDS);
         asyncQueryResponse.markRequestSent(serverRoutingInstance, requestSentLatencyMs);

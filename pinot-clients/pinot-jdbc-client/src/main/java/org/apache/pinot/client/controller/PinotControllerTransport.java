@@ -21,17 +21,19 @@ package org.apache.pinot.client.controller;
 import io.netty.handler.ssl.ClientAuth;
 import io.netty.handler.ssl.JdkSslContext;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.Map;
+import java.util.Properties;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import javax.annotation.Nullable;
 import javax.net.ssl.SSLContext;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.pinot.client.ConnectionTimeouts;
 import org.apache.pinot.client.PinotClientException;
+import org.apache.pinot.client.TlsProtocols;
 import org.apache.pinot.client.controller.response.ControllerTenantBrokerResponse;
 import org.apache.pinot.client.controller.response.SchemaResponse;
 import org.apache.pinot.client.controller.response.TableResponse;
-import org.apache.pinot.spi.utils.CommonConstants;
 import org.asynchttpclient.AsyncHttpClient;
 import org.asynchttpclient.BoundRequestBuilder;
 import org.asynchttpclient.DefaultAsyncHttpClientConfig;
@@ -49,17 +51,8 @@ public class PinotControllerTransport {
   private final String _scheme;
   private final AsyncHttpClient _httpClient;
 
-
-  public PinotControllerTransport() {
-    this(Collections.emptyMap(), CommonConstants.HTTP_PROTOCOL, null);
-  }
-
-  public PinotControllerTransport(Map<String, String> headers) {
-    this(headers, CommonConstants.HTTP_PROTOCOL, null);
-  }
-
-  public PinotControllerTransport(Map<String, String> headers, String scheme,
-      @Nullable SSLContext sslContext) {
+  public PinotControllerTransport(Map<String, String> headers, String scheme, @Nullable SSLContext sslContext,
+      ConnectionTimeouts connectionTimeouts, TlsProtocols tlsProtocols, @Nullable String appId) {
     _headers = headers;
     _scheme = scheme;
 
@@ -68,7 +61,30 @@ public class PinotControllerTransport {
       builder.setSslContext(new JdkSslContext(sslContext, true, ClientAuth.OPTIONAL));
     }
 
+    builder.setReadTimeout(connectionTimeouts.getReadTimeoutMs())
+        .setConnectTimeout(connectionTimeouts.getConnectTimeoutMs())
+        .setHandshakeTimeout(connectionTimeouts.getHandshakeTimeoutMs())
+        .setUserAgent(getUserAgentVersionFromClassPath(appId))
+        .setEnabledProtocols(tlsProtocols.getEnabledProtocols().toArray(new String[0]));
+
     _httpClient = Dsl.asyncHttpClient(builder.build());
+  }
+
+  private String getUserAgentVersionFromClassPath(@Nullable String appId) {
+    Properties userAgentProperties = new Properties();
+    try {
+      userAgentProperties.load(
+          PinotControllerTransport.class.getClassLoader().getResourceAsStream("version.properties"));
+    } catch (IOException e) {
+      LOGGER.warn("Unable to set user agent version");
+    }
+    String userAgentFromProperties = userAgentProperties.getProperty("ua", "unknown");
+    if (StringUtils.isNotEmpty(appId)) {
+      return
+          appId.substring(0, Math.min(org.apache.pinot.client.utils.ConnectionUtils.APP_ID_MAX_CHARS, appId.length()))
+              + "-" + userAgentFromProperties;
+    }
+    return userAgentFromProperties;
   }
 
   public TableResponse getAllTables(String controllerAddress) {

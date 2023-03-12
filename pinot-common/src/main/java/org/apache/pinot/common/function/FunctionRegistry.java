@@ -21,17 +21,18 @@ package org.apache.pinot.common.function;
 import com.google.common.base.Preconditions;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
+import org.apache.calcite.schema.Function;
+import org.apache.calcite.schema.impl.ScalarFunctionImpl;
+import org.apache.calcite.util.NameMultimap;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pinot.spi.annotations.ScalarFunction;
-import org.reflections.Reflections;
-import org.reflections.scanners.MethodAnnotationsScanner;
-import org.reflections.util.ClasspathHelper;
-import org.reflections.util.ConfigurationBuilder;
-import org.reflections.util.FilterBuilder;
+import org.apache.pinot.spi.utils.PinotReflectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +46,12 @@ public class FunctionRegistry {
   }
 
   private static final Logger LOGGER = LoggerFactory.getLogger(FunctionRegistry.class);
+
+  // TODO: consolidate the following 2
+  // This FUNCTION_INFO_MAP is used by Pinot server to look up function by # of arguments
   private static final Map<String, Map<Integer, FunctionInfo>> FUNCTION_INFO_MAP = new HashMap<>();
+  // This FUNCTION_MAP is used by Calcite function catalog to look up function by function signature.
+  private static final NameMultimap<Function> FUNCTION_MAP = new NameMultimap<>();
 
   /**
    * Registers the scalar functions via reflection.
@@ -54,12 +60,8 @@ public class FunctionRegistry {
    */
   static {
     long startTimeMs = System.currentTimeMillis();
-    Reflections reflections = new Reflections(
-        new ConfigurationBuilder().setUrls(ClasspathHelper.forPackage("org.apache.pinot"))
-            .filterInputsBy(new FilterBuilder.Include(".*\\.function\\..*"))
-            .setScanners(new MethodAnnotationsScanner()));
-    Set<Method> methodSet = reflections.getMethodsAnnotatedWith(ScalarFunction.class);
-    for (Method method : methodSet) {
+    Set<Method> methods = PinotReflectionUtils.getMethodsThroughReflection(".*\\.function\\..*", ScalarFunction.class);
+    for (Method method : methods) {
       if (!Modifier.isPublic(method.getModifiers())) {
         continue;
       }
@@ -70,10 +72,10 @@ public class FunctionRegistry {
         boolean nullableParameters = scalarFunction.nullableParameters();
         if (scalarFunctionNames.length > 0) {
           for (String name : scalarFunctionNames) {
-            FunctionRegistry.registerFunction(name, method, nullableParameters);
+            FunctionRegistry.registerFunction(name, method, nullableParameters, scalarFunction.isPlaceholder());
           }
         } else {
-          FunctionRegistry.registerFunction(method, nullableParameters);
+          FunctionRegistry.registerFunction(method, nullableParameters, scalarFunction.isPlaceholder());
         }
       }
     }
@@ -92,19 +94,46 @@ public class FunctionRegistry {
   /**
    * Registers a method with the name of the method.
    */
-  public static void registerFunction(Method method, boolean nullableParameters) {
-    registerFunction(method.getName(), method, nullableParameters);
+  public static void registerFunction(Method method, boolean nullableParameters, boolean isPlaceholder) {
+    registerFunction(method.getName(), method, nullableParameters, isPlaceholder);
   }
 
   /**
    * Registers a method with the given function name.
    */
-  public static void registerFunction(String functionName, Method method, boolean nullableParameters) {
+  public static void registerFunction(String functionName, Method method, boolean nullableParameters,
+      boolean isPlaceholder) {
+    if (!isPlaceholder) {
+      registerFunctionInfoMap(functionName, method, nullableParameters);
+    }
+    registerCalciteNamedFunctionMap(functionName, method, nullableParameters);
+  }
+
+  private static void registerFunctionInfoMap(String functionName, Method method, boolean nullableParameters) {
     FunctionInfo functionInfo = new FunctionInfo(method, method.getDeclaringClass(), nullableParameters);
     String canonicalName = canonicalize(functionName);
     Map<Integer, FunctionInfo> functionInfoMap = FUNCTION_INFO_MAP.computeIfAbsent(canonicalName, k -> new HashMap<>());
-    Preconditions.checkState(functionInfoMap.put(method.getParameterCount(), functionInfo) == null,
+    FunctionInfo existFunctionInfo = functionInfoMap.put(method.getParameterCount(), functionInfo);
+    Preconditions.checkState(existFunctionInfo == null || existFunctionInfo.getMethod() == functionInfo.getMethod(),
         "Function: %s with %s parameters is already registered", functionName, method.getParameterCount());
+  }
+
+  private static void registerCalciteNamedFunctionMap(String functionName, Method method, boolean nullableParameters) {
+    if (method.getAnnotation(Deprecated.class) == null) {
+      FUNCTION_MAP.put(functionName, ScalarFunctionImpl.create(method));
+    }
+  }
+
+  public static Map<String, List<Function>> getRegisteredCalciteFunctionMap() {
+    return FUNCTION_MAP.map();
+  }
+
+  public static Collection<Function> getRegisteredCalciteFunctions(String name) {
+    return FUNCTION_MAP.map().get(name);
+  }
+
+  public static Set<String> getRegisteredCalciteFunctionNames() {
+    return FUNCTION_MAP.map().keySet();
   }
 
   /**
@@ -127,5 +156,54 @@ public class FunctionRegistry {
 
   private static String canonicalize(String functionName) {
     return StringUtils.remove(functionName, '_').toLowerCase();
+  }
+
+  /**
+   * Placeholders for scalar function, they register and represents the signature for transform and filter predicate
+   * so that v2 engine can understand and plan them correctly.
+   */
+  private static class PlaceholderScalarFunctions {
+
+    /**
+     * Noted that {@code dateTimeConvert} with String as first input is actually supported.
+     *
+     * @see org.apache.pinot.common.function.scalar.DateTimeConvert#dateTimeConvert(String, String, String, String)
+     */
+    @ScalarFunction(names = {"dateTimeConvert", "date_time_convert"}, isPlaceholder = true)
+    public static String dateTimeConvert(long timeValueNumeric, String inputFormatStr, String outputFormatStr,
+        String outputGranularityStr) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"jsonExtractScalar", "json_extract_scalar"}, isPlaceholder = true)
+    public static Object jsonExtractScalar(String jsonFieldName, String jsonPath, String resultsType) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"jsonExtractScalar", "json_extract_scalar"}, isPlaceholder = true)
+    public static Object jsonExtractScalar(String jsonFieldName, String jsonPath, String resultsType,
+        Object defaultValue) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"jsonExtractKey", "json_extract_key"}, isPlaceholder = true)
+    public static String jsonExtractKey(String jsonFieldName, String jsonPath) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"textContains", "text_contains"}, isPlaceholder = true)
+    public static boolean textContains(String text, String pattern) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"textMatch", "text_match"}, isPlaceholder = true)
+    public static boolean textMatch(String text, String pattern) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
+
+    @ScalarFunction(names = {"jsonMatch", "json_match"}, isPlaceholder = true)
+    public static boolean jsonMatch(String text, String pattern) {
+      throw new UnsupportedOperationException("Placeholder scalar function, should not reach here");
+    }
   }
 }
